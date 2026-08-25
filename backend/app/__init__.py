@@ -1,0 +1,1 @@
+"""PayMender backend package."""
