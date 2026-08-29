@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from app.config import get_settings
+import pytest
+
 from app.razorpay import RazorpayGateway
 
 
@@ -75,3 +77,125 @@ def test_conflicting_existing_reference_fails_closed(monkeypatch):
         assert "conflicting" in str(exc).lower()
     else:
         raise AssertionError("Conflicting Razorpay reference was reused")
+
+
+def test_subscription_context_uses_latest_actionable_invoice_and_failed_payment(monkeypatch):
+    calls: list[tuple[str, str]] = []
+
+    def fake_get(url, *_args, **kwargs):
+        calls.append((url, str(kwargs.get("params", ""))))
+        if url.endswith("/v1/invoices"):
+            return StubResponse({
+                "entity": "collection",
+                "count": 3,
+                "items": [
+                    {
+                        "id": "inv_paid",
+                        "subscription_id": "sub_provider_123456",
+                        "status": "paid",
+                        "currency": "INR",
+                        "amount": 99_900,
+                        "amount_due": 0,
+                        "created_at": 100,
+                    },
+                    {
+                        "id": "inv_old",
+                        "subscription_id": "sub_provider_123456",
+                        "status": "issued",
+                        "currency": "INR",
+                        "amount": 49_900,
+                        "amount_due": 49_900,
+                        "order_id": "order_old",
+                        "created_at": 200,
+                    },
+                    {
+                        "id": "inv_latest",
+                        "subscription_id": "sub_provider_123456",
+                        "status": "issued",
+                        "currency": "INR",
+                        "amount": 149_900,
+                        "amount_due": 149_900,
+                        "order_id": "order_latest",
+                        "created_at": 300,
+                        "customer_details": {"email": "discard@example.test", "contact": "+919999999999"},
+                    },
+                ],
+            })
+        if url.endswith("/v1/orders/order_latest/payments"):
+            return StubResponse({
+                "entity": "collection",
+                "count": 2,
+                "items": [
+                    {"id": "pay_old", "status": "failed", "created_at": 310, "error_reason": "issuer_down"},
+                    {
+                        "id": "pay_latest",
+                        "status": "failed",
+                        "created_at": 320,
+                        "error_reason": "card_expired",
+                        "email": "discard-payment@example.test",
+                        "contact": "+918888888888",
+                    },
+                ],
+            })
+        raise AssertionError(f"Unexpected Razorpay URL: {url}")
+
+    monkeypatch.setattr("app.razorpay.httpx.get", fake_get)
+
+    context = RazorpayGateway(live_settings()).fetch_subscription_context(
+        "sub_provider_123456",
+        retry_count=4,
+        prior_successes=7,
+    )
+
+    assert context.subscription_id == "sub_provider_123456"
+    assert context.invoice_id == "inv_latest"
+    assert context.order_id == "order_latest"
+    assert context.amount_paise == 149_900
+    assert context.currency == "INR"
+    assert context.failure_reason == "expired_card"
+    assert context.retry_count == 4
+    assert context.prior_successes == 7
+    assert "discard" not in repr(context)
+    assert len(calls) == 2
+
+
+def test_subscription_context_rejects_provider_subscription_mismatch(monkeypatch):
+    monkeypatch.setattr(
+        "app.razorpay.httpx.get",
+        lambda *_args, **_kwargs: StubResponse({
+            "entity": "collection",
+            "count": 1,
+            "items": [{
+                "id": "inv_wrong",
+                "subscription_id": "sub_someone_else",
+                "status": "issued",
+                "currency": "INR",
+                "amount_due": 99_900,
+                "created_at": 1,
+            }],
+        }),
+    )
+
+    with pytest.raises(RuntimeError, match="subscription"):
+        RazorpayGateway(live_settings()).fetch_subscription_context("sub_expected_123456")
+
+
+def test_subscription_context_rejects_non_inr_invoice(monkeypatch):
+    monkeypatch.setattr(
+        "app.razorpay.httpx.get",
+        lambda *_args, **_kwargs: StubResponse({
+            "entity": "collection",
+            "count": 1,
+            "items": [{
+                "id": "inv_usd",
+                "subscription_id": "sub_expected_123456",
+                "status": "issued",
+                "currency": "USD",
+                "amount_due": 99_900,
+                "created_at": 1,
+            }],
+        }),
+    )
+
+    with pytest.raises(RuntimeError, match="INR"):
+        RazorpayGateway(live_settings()).fetch_subscription_context("sub_expected_123456")

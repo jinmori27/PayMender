@@ -22,6 +22,10 @@ class SubscriptionCaseModel(Base):
 
     id: Mapped[str] = mapped_column(String(48), primary_key=True)
     subscription_id: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    source: Mapped[str] = mapped_column(String(24), default="synthetic", index=True)
+    enrichment_state: Mapped[str] = mapped_column(String(24), default="not_required", index=True)
+    provider_invoice_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    provider_order_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     customer_name: Mapped[str] = mapped_column(String(120), default="Demo customer")
     status: Mapped[str] = mapped_column(String(32), index=True)
     failure_reason: Mapped[str] = mapped_column(String(48), default="unknown")

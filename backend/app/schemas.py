@@ -54,6 +54,10 @@ class CaseSummary(BaseModel):
 
     id: str
     subscription_id: str
+    source: str
+    enrichment_state: str
+    provider_invoice_id: str | None
+    provider_order_id: str | None
     customer_name: str
     status: str
     failure_reason: str

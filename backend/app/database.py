@@ -36,14 +36,30 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     if settings.database_url.startswith("sqlite"):
         columns = {item["name"] for item in inspect(engine).get_columns("subscription_cases")}
-        if "last_event_created_at" not in columns:
-            with engine.begin() as connection:
+        with engine.begin() as connection:
+            if "last_event_created_at" not in columns:
                 connection.exec_driver_sql(
                     "ALTER TABLE subscription_cases ADD COLUMN last_event_created_at DATETIME"
                 )
                 connection.exec_driver_sql(
                     "UPDATE subscription_cases SET last_event_created_at = updated_at "
                     "WHERE last_event_created_at IS NULL"
+                )
+            if "source" not in columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE subscription_cases ADD COLUMN source VARCHAR(24) NOT NULL DEFAULT 'synthetic'"
+                )
+            if "enrichment_state" not in columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE subscription_cases ADD COLUMN enrichment_state VARCHAR(24) NOT NULL DEFAULT 'not_required'"
+                )
+            if "provider_invoice_id" not in columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE subscription_cases ADD COLUMN provider_invoice_id VARCHAR(80)"
+                )
+            if "provider_order_id" not in columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE subscription_cases ADD COLUMN provider_order_id VARCHAR(80)"
                 )
 
 

@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import AuditEventModel, JobModel, SubscriptionCaseModel, WebhookEventModel
+from app.razorpay import ProviderSubscriptionContext
 from app.services import accept_webhook, normalize_webhook, process_webhook_event, verify_webhook
 
 
@@ -40,6 +41,94 @@ def test_normalizes_subscription_lifecycle():
     assert normalized["status"] == "halted"
     assert normalized["failure_reason"] == "expired_card"
     assert normalized["amount_paise"] == 99_900
+
+
+def test_accepts_official_subscription_only_halted_payload(db):
+    body = json.dumps({
+        "entity": "event",
+        "event": "subscription.halted",
+        "created_at": int(datetime.now(timezone.utc).timestamp()),
+        "contains": ["subscription"],
+        "payload": {
+            "subscription": {
+                "entity": {
+                    "id": "sub_official_minimal_123",
+                    "entity": "subscription",
+                    "status": "halted",
+                    "auth_attempts": 4,
+                    "paid_count": 6,
+                    "notes": {"internal": "no amount is provided here"},
+                }
+            }
+        },
+    }).encode()
+
+    duplicate, event_id = accept_webhook(
+        db,
+        raw_body=body,
+        signature=signed(body),
+        event_id="evt_official_minimal_halted",
+        settings=get_settings(),
+    )
+
+    assert duplicate is False
+    assert event_id
+    assert db.scalar(select(JobModel).where(JobModel.payload_json.contains(event_id))) is not None
+
+
+def test_worker_enriches_subscription_only_halted_event(db, monkeypatch):
+    minimal = {
+        "entity": "event",
+        "event": "subscription.halted",
+        "created_at": int(datetime.now(timezone.utc).timestamp()),
+        "payload": {
+            "subscription": {
+                "entity": {
+                    "id": "sub_worker_enrichment_123",
+                    "status": "halted",
+                    "auth_attempts": 4,
+                    "paid_count": 8,
+                }
+            }
+        },
+    }
+    event = WebhookEventModel(
+        id="webhook_worker_enrichment",
+        event_id="evt_worker_enrichment",
+        event_type="subscription.halted",
+        payload_json=json.dumps(minimal),
+        event_created_at=datetime.now(timezone.utc),
+    )
+    db.add(event)
+    db.commit()
+    monkeypatch.setattr(
+        "app.services.RazorpayGateway.fetch_subscription_context",
+        lambda *_args, **_kwargs: ProviderSubscriptionContext(
+            subscription_id="sub_worker_enrichment_123",
+            invoice_id="inv_worker_enrichment",
+            order_id="order_worker_enrichment",
+            amount_paise=129_900,
+            currency="INR",
+            failure_reason="expired_card",
+            retry_count=4,
+            prior_successes=8,
+        ),
+    )
+
+    process_webhook_event(db, event.id, get_settings())
+
+    case = db.scalar(
+        select(SubscriptionCaseModel).where(
+            SubscriptionCaseModel.subscription_id == "sub_worker_enrichment_123"
+        )
+    )
+    assert case is not None
+    assert case.source == "razorpay_test"
+    assert case.enrichment_state == "ready"
+    assert case.provider_invoice_id == "inv_worker_enrichment"
+    assert case.provider_order_id == "order_worker_enrichment"
+    assert case.amount_paise == 129_900
+    assert case.failure_reason == "expired_card"
 
 
 def test_retry_count_uses_auth_attempts_not_remaining_billing_cycles():

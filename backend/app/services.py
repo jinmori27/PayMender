@@ -26,7 +26,7 @@ from .models import (
     utcnow,
 )
 from .policy import decide_policy
-from .razorpay import RazorpayGateway
+from .razorpay import ProviderSubscriptionContext, RazorpayGateway
 from .schemas import (
     ActionScore,
     AuditView,
@@ -200,6 +200,64 @@ def normalize_payment_link_paid(payload: dict) -> dict:
     }
 
 
+def _subscription_event_base(payload: dict) -> dict:
+    event_type = str(payload.get("event", ""))
+    if event_type not in SUPPORTED_SUBSCRIPTION_EVENTS:
+        raise ValueError(f"Unsupported Razorpay event: {event_type or 'missing'}")
+    subscription = _entity(payload, "subscription")
+    payment = _entity(payload, "payment")
+    invoice = _entity(payload, "invoice")
+    payment_notes_value = payment.get("notes") or {}
+    payment_notes = payment_notes_value if isinstance(payment_notes_value, dict) else {}
+    demo_value = payload.get("demo") or {}
+    demo = demo_value if isinstance(demo_value, dict) else {}
+    subscription_id = (
+        subscription.get("id")
+        or invoice.get("subscription_id")
+        or payment_notes.get("subscription_id")
+        or demo.get("subscription_id")
+    )
+    if not isinstance(subscription_id, str) or not subscription_id.strip():
+        raise ValueError("Webhook payload is missing a subscription id")
+    subscription_id = subscription_id.strip()
+    if len(subscription_id) > 80:
+        raise ValueError("Webhook subscription id is too long")
+    try:
+        retry_count = int(subscription.get("auth_attempts", demo.get("retry_count", 1)))
+        prior_successes = int(subscription.get("paid_count", demo.get("prior_successes", 0)))
+        days_overdue = int(demo.get("days_overdue", 0))
+        previous_interventions = int(demo.get("previous_interventions", 0))
+        contacts_7d = int(demo.get("contacts_7d", 0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Webhook counters must be integers") from exc
+    if min(retry_count, prior_successes, days_overdue, previous_interventions, contacts_7d) < 0:
+        raise ValueError("Webhook counters cannot be negative")
+    return {
+        "subscription_id": subscription_id,
+        "status": event_type.split(".", 1)[1],
+        "retry_count": retry_count,
+        "prior_successes": prior_successes,
+        "days_overdue": days_overdue,
+        "previous_interventions": previous_interventions,
+        "contacts_7d": contacts_7d,
+        "subscription": subscription,
+        "payment": payment,
+        "invoice": invoice,
+        "demo": demo,
+    }
+
+
+def _embedded_amount(payload: dict) -> Any:
+    base = _subscription_event_base(payload)
+    subscription = base["subscription"]
+    payment = base["payment"]
+    invoice = base["invoice"]
+    demo = base["demo"]
+    notes_value = subscription.get("notes") or {}
+    notes = notes_value if isinstance(notes_value, dict) else {}
+    return payment.get("amount") or invoice.get("amount_due") or invoice.get("amount") or notes.get("amount_paise") or demo.get("amount_paise")
+
+
 def validate_webhook_payload(payload: dict) -> None:
     event_type = str(payload.get("event", ""))
     if event_type not in SUPPORTED_EVENTS:
@@ -207,35 +265,32 @@ def validate_webhook_payload(payload: dict) -> None:
     if event_type == "payment_link.paid":
         normalize_payment_link_paid(payload)
     else:
-        normalize_webhook(payload)
+        _subscription_event_base(payload)
 
 
-def normalize_webhook(payload: dict) -> dict:
-    event_type = str(payload.get("event", ""))
-    if event_type not in SUPPORTED_SUBSCRIPTION_EVENTS:
-        raise ValueError(f"Unsupported Razorpay event: {event_type or 'missing'}")
-    subscription = _entity(payload, "subscription")
-    payment = _entity(payload, "payment")
-    invoice = _entity(payload, "invoice")
+def normalize_webhook(
+    payload: dict,
+    provider_context: ProviderSubscriptionContext | None = None,
+) -> dict:
+    base = _subscription_event_base(payload)
+    subscription = base["subscription"]
+    payment = base["payment"]
+    invoice = base["invoice"]
     notes_value = subscription.get("notes") or {}
     notes = notes_value if isinstance(notes_value, dict) else {}
-    demo_value = payload.get("demo") or {}
-    demo = demo_value if isinstance(demo_value, dict) else {}
-    status = event_type.split(".", 1)[1]
-    payment_notes_value = payment.get("notes") or {}
-    payment_notes = payment_notes_value if isinstance(payment_notes_value, dict) else {}
-    subscription_id = subscription.get("id") or invoice.get("subscription_id") or payment_notes.get("subscription_id") or demo.get("subscription_id")
-    if not isinstance(subscription_id, str) or not subscription_id.strip():
-        raise ValueError("Webhook payload is missing a subscription id")
-    subscription_id = subscription_id.strip()
-    if len(subscription_id) > 80:
-        raise ValueError("Webhook subscription id is too long")
-
-    amount_value = payment.get("amount") or invoice.get("amount") or notes.get("amount_paise") or demo.get("amount_paise")
+    demo = base["demo"]
+    subscription_id = base["subscription_id"]
+    status = base["status"]
+    if provider_context and provider_context.subscription_id != subscription_id:
+        raise RuntimeError("Razorpay enrichment subscription does not match the webhook")
+    amount_value = _embedded_amount(payload)
+    if amount_value is None and provider_context:
+        amount_value = provider_context.amount_paise
     amount = _validated_amount(amount_value, "outstanding amount")
     reason = (
         payment.get("error_reason")
         or payment.get("error_description")
+        or (provider_context.failure_reason if provider_context else None)
         or notes.get("failure_reason")
         or demo.get("failure_reason")
         or "unknown"
@@ -254,28 +309,23 @@ def normalize_webhook(payload: dict) -> dict:
 
     next_charge_at = subscription.get("charge_at")
     next_retry = datetime.fromtimestamp(next_charge_at, timezone.utc) if next_charge_at and status == "pending" else None
-    try:
-        retry_count = int(subscription.get("auth_attempts", demo.get("retry_count", 1)))
-        prior_successes = int(subscription.get("paid_count", demo.get("prior_successes", 0)))
-        days_overdue = int(demo.get("days_overdue", 0))
-        previous_interventions = int(demo.get("previous_interventions", 0))
-        contacts_7d = int(demo.get("contacts_7d", 0))
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Webhook counters must be integers") from exc
-    if min(retry_count, prior_successes, days_overdue, previous_interventions, contacts_7d) < 0:
-        raise ValueError("Webhook counters cannot be negative")
+    source = "synthetic" if demo else "razorpay_test"
 
     return {
         "subscription_id": subscription_id,
+        "source": source,
+        "enrichment_state": "ready" if provider_context else "not_required",
+        "provider_invoice_id": provider_context.invoice_id if provider_context else None,
+        "provider_order_id": provider_context.order_id if provider_context else None,
         "customer_name": str(demo.get("customer_name") or f"Test customer {subscription_id[-4:]}")[:120],
         "status": status,
         "failure_reason": canonical_reason,
         "amount_paise": amount,
-        "days_overdue": days_overdue,
-        "retry_count": retry_count,
-        "prior_successes": prior_successes,
-        "previous_interventions": previous_interventions,
-        "contacts_7d": contacts_7d,
+        "days_overdue": base["days_overdue"],
+        "retry_count": provider_context.retry_count if provider_context else base["retry_count"],
+        "prior_successes": provider_context.prior_successes if provider_context else base["prior_successes"],
+        "previous_interventions": base["previous_interventions"],
+        "contacts_7d": base["contacts_7d"],
         "next_retry_at": next_retry,
     }
 
@@ -303,6 +353,32 @@ def case_as_dict(case: SubscriptionCaseModel) -> dict:
 
 def _redact_processed_webhook(event: WebhookEventModel) -> None:
     event.payload_json = json_dumps({"event": event.event_type, "redacted": True})
+
+
+def mark_webhook_enrichment_failed(db: Session, webhook_db_id: str) -> None:
+    event = db.get(WebhookEventModel, webhook_db_id)
+    if not event or event.event_type not in {"subscription.pending", "subscription.halted", "subscription.charged"}:
+        return
+    try:
+        base = _subscription_event_base(json.loads(event.payload_json))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return
+    case = db.scalar(
+        select(SubscriptionCaseModel).where(
+            SubscriptionCaseModel.subscription_id == base["subscription_id"]
+        )
+    )
+    if not case or case.enrichment_state != "pending":
+        return
+    case.enrichment_state = "failed"
+    audit(
+        db,
+        "enrichment",
+        "Invoice enrichment needs attention",
+        "Authoritative Razorpay context could not be verified after three attempts. No recovery action was proposed.",
+        case_id=case.id,
+        severity="error",
+    )
 
 
 def _process_payment_link_paid(db: Session, event: WebhookEventModel, payload: dict) -> None:
@@ -358,10 +434,92 @@ def process_webhook_event(db: Session, webhook_db_id: str, settings: Settings) -
     if event.event_type == "payment_link.paid":
         _process_payment_link_paid(db, event, payload)
         return
-    normalized = normalize_webhook(payload)
-    case = db.scalar(select(SubscriptionCaseModel).where(SubscriptionCaseModel.subscription_id == normalized["subscription_id"]))
+    base = _subscription_event_base(payload)
+    case = db.scalar(
+        select(SubscriptionCaseModel).where(
+            SubscriptionCaseModel.subscription_id == base["subscription_id"]
+        )
+    )
     state_applied = True
     incoming_created = as_utc(event.event_created_at or event.received_at)
+
+    if base["status"] in {"cancelled", "completed"}:
+        if case is None:
+            audit(
+                db,
+                "lifecycle",
+                "Terminal subscription retained without a recovery case",
+                base["status"],
+                metadata={"subscription_id": base["subscription_id"]},
+            )
+        else:
+            last_event_created = as_utc(case.last_event_created_at) if case.last_event_created_at else None
+            if last_event_created is None or incoming_created >= last_event_created:
+                case.status = base["status"]
+                case.last_event_created_at = incoming_created
+                existing = db.scalar(
+                    select(RecoveryProposalModel)
+                    .where(RecoveryProposalModel.case_id == case.id)
+                    .order_by(RecoveryProposalModel.created_at.desc())
+                )
+                if existing and existing.state == "proposed":
+                    existing.state = "resolved_terminally"
+                audit(db, "lifecycle", "Terminal subscription observed", base["status"], case_id=case.id)
+            else:
+                audit(
+                    db,
+                    "safety",
+                    "Out-of-order event retained",
+                    "Older event was recorded without rolling back case state.",
+                    case_id=case.id,
+                )
+        event.processed_at = utcnow()
+        _redact_processed_webhook(event)
+        db.commit()
+        return
+
+    provider_context: ProviderSubscriptionContext | None = None
+    if _embedded_amount(payload) is None:
+        if case is None:
+            case = SubscriptionCaseModel(
+                id=new_id("case"),
+                subscription_id=base["subscription_id"],
+                source="synthetic" if base["demo"] else "razorpay_test",
+                enrichment_state="pending",
+                customer_name=str(base["demo"].get("customer_name") or f"Test customer {base['subscription_id'][-4:]}")[:120],
+                status=base["status"],
+                failure_reason="unknown",
+                amount_paise=0,
+                days_overdue=base["days_overdue"],
+                retry_count=base["retry_count"],
+                prior_successes=base["prior_successes"],
+                previous_interventions=base["previous_interventions"],
+                contacts_7d=base["contacts_7d"],
+                last_event_created_at=incoming_created,
+            )
+            db.add(case)
+        else:
+            case.enrichment_state = "pending"
+        audit(
+            db,
+            "enrichment",
+            "Fetching authoritative invoice context",
+            "The webhook was valid but did not contain a recoverable amount.",
+            case_id=case.id,
+        )
+        db.commit()
+        provider_context = RazorpayGateway(settings).fetch_subscription_context(
+            base["subscription_id"],
+            retry_count=base["retry_count"],
+            prior_successes=base["prior_successes"],
+        )
+
+    normalized = normalize_webhook(payload, provider_context)
+    case = db.scalar(
+        select(SubscriptionCaseModel).where(
+            SubscriptionCaseModel.subscription_id == normalized["subscription_id"]
+        )
+    )
     if case is None:
         case = SubscriptionCaseModel(id=new_id("case"), last_event_created_at=incoming_created, **normalized)
         db.add(case)
@@ -383,6 +541,8 @@ def process_webhook_event(db: Session, webhook_db_id: str, settings: Settings) -
         if normalized["status"] == "charged" or last_event_created is None or incoming_created >= last_event_created:
             for key, value in normalized.items():
                 if key != "subscription_id":
+                    if key == "failure_reason" and value == "unknown" and case.failure_reason != "unknown":
+                        continue
                     setattr(case, key, value)
             if last_event_created is None or incoming_created > last_event_created:
                 case.last_event_created_at = incoming_created
@@ -410,8 +570,18 @@ def process_webhook_event(db: Session, webhook_db_id: str, settings: Settings) -
             existing.state = "resolved_organically"
     elif normalized["status"] in {"pending", "halted"}:
         create_proposal(db, case, settings)
-    else:
-        audit(db, "lifecycle", "Terminal subscription observed", normalized["status"], case_id=case.id)
+        if provider_context:
+            audit(
+                db,
+                "enrichment",
+                "Invoice context verified",
+                f"{provider_context.invoice_id} matched the subscription and INR amount.",
+                case_id=case.id,
+                metadata={
+                    "invoice_id": provider_context.invoice_id,
+                    "order_id": provider_context.order_id,
+                },
+            )
 
     event.processed_at = utcnow()
     _redact_processed_webhook(event)
@@ -587,15 +757,27 @@ def list_audit(db: Session, limit: int = 100) -> list[AuditView]:
 
 
 def metrics(db: Session, settings: Settings) -> MetricsView:
-    cases = db.scalars(select(SubscriptionCaseModel)).all()
-    latest_proposals = db.scalars(select(RecoveryProposalModel)).all()
+    source = "synthetic" if settings.demo_mode else "razorpay_test"
+    cases = db.scalars(
+        select(SubscriptionCaseModel).where(SubscriptionCaseModel.source == source)
+    ).all()
+    case_ids = {item.id for item in cases}
+    latest_proposals = [
+        item for item in db.scalars(select(RecoveryProposalModel)).all()
+        if item.case_id in case_ids
+    ]
     predicted = sum(max(item.expected_value_rupees, 0) * 100 for item in latest_proposals if item.state in {"proposed", "approved"})
     blocked = db.scalar(select(func.count()).select_from(AuditEventModel).where(AuditEventModel.category == "safety")) or 0
     return MetricsView(
         display_name=settings.app_display_name,
         demo_mode=settings.demo_mode,
         total_cases=len(cases),
-        at_risk_paise=sum(item.amount_paise for item in cases if item.status not in {"charged", "cancelled", "completed"}),
+        at_risk_paise=sum(
+            item.amount_paise
+            for item in cases
+            if item.enrichment_state not in {"pending", "failed"}
+            and item.status not in {"charged", "cancelled", "completed"}
+        ),
         predicted_recoverable_paise=int(predicted),
         recovered_paise=sum(item.recovered_amount_paise for item in cases),
         pending_approvals=sum(1 for item in latest_proposals if item.state == "proposed"),
@@ -636,6 +818,7 @@ def reset_demo(db: Session, settings: Settings) -> None:
     for index, item in enumerate(DEMO_CASES):
         case = SubscriptionCaseModel(
             id=f"case_demo_{index + 1}", subscription_id=f"sub_demo_{index + 1}", customer_name=item["name"],
+            source="synthetic", enrichment_state="not_required",
             status=item["status"], failure_reason=item["reason"], amount_paise=item["amount"],
             days_overdue=item["days"], retry_count=item["retry"], prior_successes=item["successes"],
             previous_interventions=0, contacts_7d=item["contacts"],
@@ -647,3 +830,8 @@ def reset_demo(db: Session, settings: Settings) -> None:
         create_proposal(db, case, settings)
     audit(db, "demo", "Demo dataset ready", "Seven synthetic subscription cases were evaluated.")
     db.commit()
+
+
+def initialize_demo_data(db: Session, settings: Settings) -> None:
+    if settings.demo_mode and not list_cases(db):
+        reset_demo(db, settings)

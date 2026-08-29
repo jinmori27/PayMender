@@ -9,7 +9,7 @@ from sqlalchemy import or_, select
 from .config import Settings
 from .database import SessionLocal
 from .models import JobModel, WebhookEventModel
-from .services import audit, process_webhook_event
+from .services import audit, mark_webhook_enrichment_failed, process_webhook_event
 
 
 def claim_and_process_one(settings: Settings) -> bool:
@@ -55,6 +55,7 @@ def claim_and_process_one(settings: Settings) -> bool:
                 if job.status == "failed" and kind == "process_webhook":
                     webhook_event = db.get(WebhookEventModel, payload.get("webhook_event_id"))
                     if webhook_event:
+                        mark_webhook_enrichment_failed(db, webhook_event.id)
                         webhook_event.payload_json = json.dumps({"event": webhook_event.event_type, "redacted": True})
                 audit(
                     db,

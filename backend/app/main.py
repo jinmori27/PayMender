@@ -27,6 +27,7 @@ from .services import (
     audit,
     get_case,
     latest_evaluation,
+    initialize_demo_data,
     list_audit,
     list_cases,
     metrics,
@@ -43,8 +44,7 @@ settings = get_settings()
 async def lifespan(_app: FastAPI):
     init_db()
     with SessionLocal() as db:
-        if not list_cases(db):
-            reset_demo(db, settings)
+        initialize_demo_data(db, settings)
     stop_event = asyncio.Event()
     task = asyncio.create_task(worker_loop(settings, stop_event))
     yield
