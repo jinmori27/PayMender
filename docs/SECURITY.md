@@ -7,6 +7,7 @@
 - Secrets are read from ignored `.env.local`; logs and audit messages contain exception classes, never credentials or raw secrets.
 - Operator APIs require a constant-time checked `X-Operator-Token`; the frontend holds this token only in memory.
 - Gemini receives an allowlist of non-identifying case features and action scores, never names, URLs, external IDs or Razorpay credentials.
+- Invoice enrichment accepts only exact subscription matches, INR currency and positive bounded amounts. Customer name, email, phone, address and other provider PII are discarded before persistence or Gemini use.
 - Gemini cannot call tools, change state, send messages or create links.
 - Payment Link amount comes from the normalized outstanding amount and cannot be edited in the approval UI.
 - Recovery links are restricted to halted subscriptions and one active link per case.
@@ -16,6 +17,7 @@
 - The test executor caps real Payment Links at five for the submission demo.
 - Generated English/Hinglish text remains a preview; there is no delivery integration.
 - Processed webhook bodies are reduced to event metadata; permanently failed jobs are also redacted after the final retry.
+- Synthetic and Razorpay test cases are source-tagged and mode-filtered across queue, case detail, approvals, audit views and KPIs.
 - Security headers prevent framing, MIME sniffing and permissive referrer leakage. The production SPA is served from its fixed static root.
 
 All bundled demo customers are fictional. Do not add real customer payloads to fixtures, screenshots or the public repository.
