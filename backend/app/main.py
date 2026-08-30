@@ -156,12 +156,12 @@ def operator_session() -> dict:
 
 @app.get("/api/cases", response_model=list[CaseSummary], dependencies=[Depends(require_operator)])
 def cases(db: Session = Depends(get_db)) -> list[CaseSummary]:
-    return list_cases(db)
+    return list_cases(db, settings)
 
 
 @app.get("/api/cases/{case_id}", response_model=CaseDetail, dependencies=[Depends(require_operator)])
 def case_detail(case_id: str, db: Session = Depends(get_db)) -> CaseDetail:
-    item = get_case(db, case_id)
+    item = get_case(db, case_id, settings)
     if not item:
         raise HTTPException(status_code=404, detail="Case not found")
     return item
@@ -177,7 +177,7 @@ def approve(case_id: str, body: ApprovalRequest, db: Session = Depends(get_db)) 
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="External test-mode action failed safely") from exc
-    return get_case(db, case_id)  # type: ignore[return-value]
+    return get_case(db, case_id, settings)  # type: ignore[return-value]
 
 
 @app.get("/api/metrics", response_model=MetricsView, dependencies=[Depends(require_operator)])
@@ -187,7 +187,7 @@ def get_metrics(db: Session = Depends(get_db)) -> MetricsView:
 
 @app.get("/api/audit", response_model=list[AuditView], dependencies=[Depends(require_operator)])
 def get_audit(limit: int = 100, db: Session = Depends(get_db)) -> list[AuditView]:
-    return list_audit(db, min(max(limit, 1), 250))
+    return list_audit(db, settings, min(max(limit, 1), 250))
 
 
 @app.post("/api/evaluations", response_model=EvaluationSummary, dependencies=[Depends(require_operator)])

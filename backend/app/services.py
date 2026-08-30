@@ -628,7 +628,8 @@ def create_proposal(db: Session, case: SubscriptionCaseModel, settings: Settings
 
 def approve_proposal(db: Session, case_id: str, decision: str, note: str, settings: Settings) -> RecoveryProposalModel:
     case = db.get(SubscriptionCaseModel, case_id)
-    if not case:
+    expected_source = "synthetic" if settings.demo_mode else "razorpay_test"
+    if not case or case.source != expected_source:
         raise LookupError("Case not found")
     proposal = db.scalar(
         select(RecoveryProposalModel)
@@ -734,22 +735,50 @@ def proposal_view(model: RecoveryProposalModel) -> ProposalView:
     )
 
 
-def list_cases(db: Session) -> list[CaseSummary]:
-    rows = db.scalars(select(SubscriptionCaseModel).order_by(SubscriptionCaseModel.updated_at.desc())).all()
+def list_cases(db: Session, settings: Settings) -> list[CaseSummary]:
+    source = "synthetic" if settings.demo_mode else "razorpay_test"
+    rows = db.scalars(
+        select(SubscriptionCaseModel)
+        .where(SubscriptionCaseModel.source == source)
+        .order_by(SubscriptionCaseModel.updated_at.desc())
+    ).all()
     return [CaseSummary.model_validate(row) for row in rows]
 
 
-def get_case(db: Session, case_id: str) -> CaseDetail | None:
+def get_case(db: Session, case_id: str, settings: Settings) -> CaseDetail | None:
     row = db.get(SubscriptionCaseModel, case_id)
-    if not row:
+    expected_source = "synthetic" if settings.demo_mode else "razorpay_test"
+    if not row or row.source != expected_source:
         return None
     summary = CaseSummary.model_validate(row)
     proposals = [proposal_view(item) for item in sorted(row.proposals, key=lambda p: p.created_at, reverse=True)]
     return CaseDetail(**summary.model_dump(), proposals=proposals)
 
 
-def list_audit(db: Session, limit: int = 100) -> list[AuditView]:
-    rows = db.scalars(select(AuditEventModel).order_by(AuditEventModel.created_at.desc()).limit(limit)).all()
+def _mode_audit_rows(db: Session, settings: Settings) -> list[AuditEventModel]:
+    source = "synthetic" if settings.demo_mode else "razorpay_test"
+    case_ids = set(db.scalars(
+        select(SubscriptionCaseModel.id).where(SubscriptionCaseModel.source == source)
+    ).all())
+    rows = db.scalars(select(AuditEventModel).order_by(AuditEventModel.created_at.desc())).all()
+    relevant: list[AuditEventModel] = []
+    for row in rows:
+        if row.case_id:
+            if row.case_id in case_ids:
+                relevant.append(row)
+            continue
+        metadata = json.loads(row.metadata_json)
+        injected = metadata.get("injected") is True
+        if settings.demo_mode:
+            if row.category == "demo" or injected:
+                relevant.append(row)
+        elif row.category != "demo" and not injected:
+            relevant.append(row)
+    return relevant
+
+
+def list_audit(db: Session, settings: Settings, limit: int = 100) -> list[AuditView]:
+    rows = _mode_audit_rows(db, settings)[:limit]
     return [AuditView(
         id=row.id, case_id=row.case_id, category=row.category, title=row.title, detail=row.detail,
         severity=row.severity, metadata=json.loads(row.metadata_json), created_at=row.created_at,
@@ -767,7 +796,7 @@ def metrics(db: Session, settings: Settings) -> MetricsView:
         if item.case_id in case_ids
     ]
     predicted = sum(max(item.expected_value_rupees, 0) * 100 for item in latest_proposals if item.state in {"proposed", "approved"})
-    blocked = db.scalar(select(func.count()).select_from(AuditEventModel).where(AuditEventModel.category == "safety")) or 0
+    blocked = sum(1 for item in _mode_audit_rows(db, settings) if item.category == "safety")
     return MetricsView(
         display_name=settings.app_display_name,
         demo_mode=settings.demo_mode,
@@ -833,5 +862,5 @@ def reset_demo(db: Session, settings: Settings) -> None:
 
 
 def initialize_demo_data(db: Session, settings: Settings) -> None:
-    if settings.demo_mode and not list_cases(db):
+    if settings.demo_mode and not list_cases(db, settings):
         reset_demo(db, settings)
