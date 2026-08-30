@@ -8,6 +8,10 @@ export type RecoveryAction =
 export interface CaseSummary {
   id: string;
   subscription_id: string;
+  source: "synthetic" | "razorpay_test";
+  enrichment_state: "pending" | "ready" | "failed" | "not_required";
+  provider_invoice_id: string | null;
+  provider_order_id: string | null;
   customer_name: string;
   status: string;
   failure_reason: string;
@@ -64,6 +68,15 @@ export interface Metrics {
   stopped_cases: number;
   escalated_cases: number;
   blocked_actions: number;
+}
+
+export interface PublicStatus {
+  status: string;
+  display_name: string;
+  demo_mode: boolean;
+  gemini: string;
+  razorpay: string;
+  operator_auth: string;
 }
 
 export interface AuditEvent {

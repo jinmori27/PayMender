@@ -1,4 +1,4 @@
-import type { AuditEvent, CaseDetail, CaseSummary, EvaluationSummary, Metrics } from "./types";
+import type { AuditEvent, CaseDetail, CaseSummary, EvaluationSummary, Metrics, PublicStatus } from "./types";
 
 let operatorToken = "";
 
@@ -19,6 +19,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  status: () => request<PublicStatus>("/api/health"),
   authenticate: async (token: string) => {
     operatorToken = token;
     try {

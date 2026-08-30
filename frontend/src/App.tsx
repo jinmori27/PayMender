@@ -7,7 +7,9 @@ import {
   Check,
   ChevronRight,
   CircleDollarSign,
+  Copy,
   Clock3,
+  ExternalLink,
   FlaskConical,
   History,
   KeyRound,
@@ -49,7 +51,7 @@ const moneyRupees = (rupees: number) =>
 const cleanLabel = (value: string) => value.replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase());
 
 function StatusPill({ value }: { value: string }) {
-  const tone = value === "halted" || value === "proposed" ? "amber" : value === "charged" || value === "executed" ? "green" : "slate";
+  const tone = value === "needs attention" || value === "failed" ? "red" : value === "halted" || value === "proposed" ? "amber" : value === "charged" || value === "executed" ? "green" : "slate";
   return <span className={`status-pill ${tone}`}><span />{cleanLabel(value)}</span>;
 }
 
@@ -75,8 +77,13 @@ function CaseCard({ item, selected, onClick, proposal }: {
         <div className="case-identity"><strong>{item.customer_name}</strong><span>{item.subscription_id}</span></div>
         <ChevronRight size={17} />
       </div>
-      <div className="case-amount"><strong>{money(item.amount_paise)}</strong><StatusPill value={item.status} /></div>
+      <div className="case-amount">
+        <strong>{item.enrichment_state === "pending" ? "Fetching amount" : item.enrichment_state === "failed" ? "Amount unavailable" : money(item.amount_paise)}</strong>
+        <StatusPill value={item.enrichment_state === "failed" ? "needs attention" : item.status} />
+      </div>
       <div className="case-signal"><span>{cleanLabel(item.failure_reason)}</span><span>{item.retry_count} retries</span></div>
+      {item.enrichment_state === "pending" && <div className="enrichment-line"><RefreshCw className="spin" />Verifying Razorpay invoice</div>}
+      {item.enrichment_state === "failed" && <div className="enrichment-line failed"><AlertTriangle />Provider context could not be verified</div>}
       {proposal && (
         <div className="case-action">
           <span>{proposal.state === "proposed" ? "Approval needed" : proposal.state === "retryable_failure" ? "Retry available" : "Current action"}</span>
@@ -102,8 +109,12 @@ function ScoreBars({ proposal }: { proposal: Proposal }) {
   );
 }
 
-function Inspector({ detail, busy, onDecision }: {
-  detail: CaseDetail | null; busy: boolean; onDecision: (decision: "approve" | "reject") => void;
+function Inspector({ detail, busy, displayName, onDecision, onCopyLink }: {
+  detail: CaseDetail | null;
+  busy: boolean;
+  displayName: string;
+  onDecision: (decision: "approve" | "reject") => void;
+  onCopyLink: (url: string) => void;
 }) {
   if (!detail) return <section className="inspector empty-state"><Sparkles /><h2>Select a recovery case</h2><p>Inspect the evidence, model scores, policy override and complete audit context.</p></section>;
   const proposal = detail.proposals[0];
@@ -111,14 +122,20 @@ function Inspector({ detail, busy, onDecision }: {
     <section className="inspector">
       <div className="inspector-head">
         <div><h2>{detail.customer_name}</h2><p>{detail.subscription_id}</p></div>
-        <div className="amount-block"><small>Outstanding</small><strong>{money(detail.amount_paise)}</strong></div>
+        <div className="amount-block"><small>Outstanding</small><strong>{detail.enrichment_state === "pending" ? "Verifying" : detail.enrichment_state === "failed" ? "Unavailable" : money(detail.amount_paise)}</strong></div>
       </div>
       <div className="case-facts">
         <div><span>Status</span><StatusPill value={detail.status} /></div>
         <div><span>Failure</span><b>{cleanLabel(detail.failure_reason)}</b></div>
         <div><span>Attempts</span><b>{detail.retry_count}</b></div>
-        <div><span>Contacts · 7d</span><b>{detail.contacts_7d} / 3</b></div>
+        <div><span>Case source</span><b>{detail.source === "synthetic" ? "Synthetic demo" : "Razorpay test"}</b></div>
       </div>
+      {detail.enrichment_state === "pending" && (
+        <div className="provider-state"><RefreshCw className="spin" /><div><b>Verifying invoice context</b><span>{displayName} is fetching the authoritative amount and latest failed payment from Razorpay.</span></div></div>
+      )}
+      {detail.enrichment_state === "failed" && (
+        <div className="provider-state failed"><AlertTriangle /><div><b>Provider context needs attention</b><span>Invoice details could not be verified after three attempts. No recovery action was proposed.</span></div></div>
+      )}
       {proposal ? (
         <>
           <div className="proposal-banner">
@@ -146,18 +163,35 @@ function Inspector({ detail, busy, onDecision }: {
             </div>
           </div>
           {(proposal.state === "proposed" || proposal.state === "retryable_failure") && (
-            <div className="approval-bar">
-              <div><ShieldCheck /><span><b>{proposal.state === "retryable_failure" ? "Previous attempt contained" : "Human gate active"}</b><small>{proposal.state === "retryable_failure" ? "Retry reuses the same execution record and remains gated." : "External action cannot execute without approval."}</small></span></div>
-              <div className="approval-actions">
-                <button className="btn ghost" disabled={busy} onClick={() => onDecision("reject")}><X size={16} />Reject</button>
-                <button className="btn primary" disabled={busy} onClick={() => onDecision("approve")}>
-                  {busy ? <RefreshCw size={16} className="spin" /> : <Check size={16} />}{proposal.state === "retryable_failure" ? "Retry action" : "Approve action"}
-                </button>
+            <>
+              {proposal.recommended_action === "CREATE_RECOVERY_LINK" && (
+                <div className="execution-preview">
+                  <div><span>Exact amount</span><b>{money(detail.amount_paise)}</b></div>
+                  <div><span>Link expiry</span><b>48 hours</b></div>
+                  <div><span>Notifications</span><b>Disabled</b></div>
+                  <small>Test-mode only. Approval creates one Razorpay link and does not send it to the customer.</small>
+                </div>
+              )}
+              <div className="approval-bar">
+                <div><ShieldCheck /><span><b>{proposal.state === "retryable_failure" ? "Previous attempt contained" : "Human gate active"}</b><small>{proposal.state === "retryable_failure" ? "Retry reuses the same execution record and remains gated." : "External action cannot execute without approval."}</small></span></div>
+                <div className="approval-actions">
+                  <button className="btn ghost" disabled={busy} onClick={() => onDecision("reject")}><X size={16} />Reject</button>
+                  <button className="btn primary" disabled={busy} onClick={() => onDecision("approve")}>
+                    {busy ? <RefreshCw size={16} className="spin" /> : <Check size={16} />}{proposal.state === "retryable_failure" ? "Retry action" : "Approve action"}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+          {detail.active_recovery_link_id && detail.active_recovery_link_url && (
+            <div className="link-success">
+              <Check />
+              <div><b>Recovery link ready</b><span>{detail.active_recovery_link_id}. No notification sent.</span></div>
+              <div className="link-actions">
+                <button className="btn ghost" onClick={() => onCopyLink(detail.active_recovery_link_url!)}><Copy />Copy</button>
+                <a className="btn primary" href={detail.active_recovery_link_url} target="_blank" rel="noreferrer"><ExternalLink />Open test link</a>
               </div>
             </div>
-          )}
-          {detail.active_recovery_link_id && (
-            <div className="link-success"><Check /><div><b>Recovery link created safely</b><span>{detail.active_recovery_link_id} · No notification sent</span></div></div>
           )}
         </>
       ) : <div className="empty-proposal">No recovery proposal has been generated.</div>}
@@ -165,7 +199,7 @@ function Inspector({ detail, busy, onDecision }: {
   );
 }
 
-function EvaluationView({ data, running, onRun }: { data: EvaluationSummary | null; running: boolean; onRun: () => void }) {
+function EvaluationView({ data, displayName, running, onRun }: { data: EvaluationSummary | null; displayName: string; running: boolean; onRun: () => void }) {
   const best = data?.policies.find((policy) => policy.policy === "PayMender");
   const max = Math.max(...(data?.policies.map((policy) => policy.net_recovered_mean) ?? [1]));
   return (
@@ -184,7 +218,7 @@ function EvaluationView({ data, running, onRun }: { data: EvaluationSummary | nu
             <div className="section-title"><span>Net rupees recovered by policy</span><small>mean ± standard deviation</small></div>
             {data.policies.map((policy) => (
               <div className={`eval-row ${policy.policy === "PayMender" ? "winner" : ""}`} key={policy.policy}>
-                <div className="eval-name"><b>{policy.policy}</b><span>{(policy.recovery_rate_mean * 100).toFixed(1)}% recovered</span></div>
+                <div className="eval-name"><b>{policy.policy === "PayMender" ? displayName : policy.policy}</b><span>{(policy.recovery_rate_mean * 100).toFixed(1)}% recovered</span></div>
                 <div className="eval-track"><span style={{ width: `${(policy.net_recovered_mean / max) * 100}%` }} /></div>
                 <div className="eval-number"><b>{moneyRupees(policy.net_recovered_mean)}</b><span>± {moneyRupees(policy.net_recovered_std)}</span></div>
               </div>
@@ -222,6 +256,7 @@ function AuditTimeline({ audit }: { audit: AuditEvent[] }) {
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
+  const [displayName, setDisplayName] = useState("PayMender");
   const [operatorToken, setOperatorToken] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -245,6 +280,13 @@ export default function App() {
   useEffect(() => {
     if (authenticated) load().catch((error: Error) => setNotice(error.message));
   }, [authenticated]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    api.status().then((status) => {
+      setDisplayName(status.display_name);
+      document.title = `${status.display_name} - Recovery Command Center`;
+    }).catch(() => undefined);
+  }, []);
 
   const authenticate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -280,6 +322,14 @@ export default function App() {
   const runEval = async () => { setBusy(true); try { setEvaluation(await api.runEvaluation()); setNotice("Held-out evaluation completed."); } catch (error) { setNotice(error instanceof Error ? error.message : "Evaluation failed."); } finally { setBusy(false); } };
   const reset = async () => { setBusy(true); try { await api.reset(); setSelectedId(null); await load(null); setNotice("Demo data restored."); } finally { setBusy(false); } };
   const inject = async (scenario: string) => { await api.inject(scenario); await load(selectedId); setNotice("Failure injected and contained. See the audit evidence below."); };
+  const copyLink = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setNotice("Recovery link copied. No notification was sent.");
+    } catch {
+      setNotice("Copy was blocked by the browser. Open the link and copy it from the address bar.");
+    }
+  };
 
   const latestProposalByCase = useMemo(() => new Map(cases.map((item) => [item.id, detail?.id === item.id ? detail.proposals[0] : undefined])), [cases, detail]);
 
@@ -287,7 +337,7 @@ export default function App() {
     return (
       <main className="access-shell">
         <section className="access-card">
-          <div className="access-brand"><div className="logo-glyph"><Zap fill="currentColor" /></div><div><b>PayMender</b><span>Operator command center</span></div></div>
+          <div className="access-brand"><div className="logo-glyph"><Zap fill="currentColor" /></div><div><b>{displayName}</b><span>Operator command center</span></div></div>
           <div className="access-icon"><KeyRound /></div>
           <h1>Protected operations</h1>
           <p>Enter the operator token from your local <code>.env.local</code> file. It stays only in this browser tab and is never saved.</p>
@@ -306,16 +356,16 @@ export default function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand-mark"><div className="logo-glyph"><Zap fill="currentColor" /></div><div><b>{metrics?.display_name ?? "PayMender"}</b><span>Revenue Recovery</span></div></div>
+        <div className="brand-mark"><div className="logo-glyph"><Zap fill="currentColor" /></div><div><b>{metrics?.display_name ?? displayName}</b><span>Revenue Recovery</span></div></div>
         <nav>
           <button className={view === "command" ? "active" : ""} onClick={() => setView("command")}><Activity />Command center</button>
           <button className={view === "evaluation" ? "active" : ""} onClick={() => setView("evaluation")}><BarChart3 />Evaluation</button>
-          <button className={view === "failures" ? "active" : ""} onClick={() => setView("failures")}><FlaskConical />Reliability lab</button>
+          {metrics?.demo_mode && <button className={view === "failures" ? "active" : ""} onClick={() => setView("failures")}><FlaskConical />Reliability lab</button>}
         </nav>
         <div className="trust-card"><ShieldCheck /><b>Bounded by design</b><p>AI recommends. Policy constrains. You approve every external action.</p><span><i /> TEST ENVIRONMENT</span></div>
       </aside>
       <div className="main-shell">
-        <header className="topbar"><div><span className="live-dot" />Operations healthy</div><div className="top-actions"><span className="mode-pill">{metrics?.demo_mode ? "Synthetic demo" : "Razorpay test"}</span><button className="icon-btn" onClick={reset} disabled={busy} title="Reset demo" aria-label="Reset demo data"><RefreshCw size={17} className={busy ? "spin" : ""} /></button><button className="icon-btn" onClick={signOut} title="Lock command center" aria-label="Lock command center"><LogOut size={17} /></button></div></header>
+        <header className="topbar"><div><span className="live-dot" />Operations healthy</div><div className="top-actions"><span className="mode-pill">{metrics?.demo_mode ? "Synthetic demo" : "Razorpay test"}</span>{metrics?.demo_mode && <button className="icon-btn" onClick={reset} disabled={busy} title="Reset demo" aria-label="Reset demo data"><RefreshCw size={17} className={busy ? "spin" : ""} /></button>}<button className="icon-btn" onClick={signOut} title="Lock command center" aria-label="Lock command center"><LogOut size={17} /></button></div></header>
         {view === "command" && <main className="command-view">
           <div className="command-intro"><div><h1>Recover failed subscriptions safely.</h1><p>Prioritize the right intervention, approve money actions, and trace every decision.</p></div><div className="batch-badge"><span>Current portfolio</span><b>{metrics?.total_cases ?? 0} cases processed</b><small><Check size={13} /> All policy gates active</small></div></div>
           <div className="kpi-grid">
@@ -325,13 +375,13 @@ export default function App() {
             <KpiCard label="Awaiting approval" value={String(metrics?.pending_approvals ?? 0)} note={`${metrics?.blocked_actions ?? 0} risky actions contained`} icon={ShieldCheck} />
           </div>
           <div className="command-grid">
-            <section className="case-queue"><div className="queue-head"><div><h2>Recovery queue</h2><span>{cases.length} synthetic cases</span></div><div className="queue-count">{metrics?.pending_approvals ?? 0} gated</div></div><div className="case-list">{cases.map((item) => <CaseCard key={item.id} item={item} selected={selectedId === item.id} proposal={latestProposalByCase.get(item.id)} onClick={() => selectCase(item.id)} />)}</div></section>
-            <Inspector detail={detail} busy={busy} onDecision={decide} />
+            <section className="case-queue"><div className="queue-head"><div><h2>Recovery queue</h2><span>{metrics ? `${cases.length} ${metrics.demo_mode ? "synthetic" : "Razorpay test"} cases` : "Loading cases"}</span></div><div className="queue-count">{metrics?.pending_approvals ?? 0} gated</div></div><div className="case-list">{cases.map((item) => <CaseCard key={item.id} item={item} selected={selectedId === item.id} proposal={latestProposalByCase.get(item.id)} onClick={() => selectCase(item.id)} />)}{metrics && cases.length === 0 && <div className="queue-empty"><Clock3 /><b>Waiting for a failed subscription</b><span>Signed Razorpay test webhooks will appear here after verification.</span></div>}</div></section>
+            <Inspector detail={detail} busy={busy} displayName={metrics?.display_name ?? displayName} onDecision={decide} onCopyLink={copyLink} />
           </div>
           <section className="command-audit card-surface"><div className="section-title"><span>Immutable audit trail</span><small>{audit.length} recent events</small></div><AuditTimeline audit={audit.slice(0, 8)} /></section>
         </main>}
-        {view === "evaluation" && <EvaluationView data={evaluation} running={busy} onRun={runEval} />}
-        {view === "failures" && <FailureLab audit={audit} onInject={inject} />}
+        {view === "evaluation" && <EvaluationView data={evaluation} displayName={metrics?.display_name ?? displayName} running={busy} onRun={runEval} />}
+        {view === "failures" && metrics?.demo_mode && <FailureLab audit={audit} onInject={inject} />}
       </div>
       {notice && <button className="toast" onClick={() => setNotice(null)} aria-live="polite"><Check size={17} /><span>{notice}</span><X size={15} /></button>}
     </div>
