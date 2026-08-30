@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -786,30 +786,28 @@ def get_case(db: Session, case_id: str, settings: Settings) -> CaseDetail | None
     return CaseDetail(**summary.model_dump(), proposals=proposals)
 
 
-def _mode_audit_rows(db: Session, settings: Settings) -> list[AuditEventModel]:
+def _mode_audit_filter(settings: Settings):
     source = "synthetic" if settings.demo_mode else "razorpay_test"
-    case_ids = set(db.scalars(
-        select(SubscriptionCaseModel.id).where(SubscriptionCaseModel.source == source)
-    ).all())
-    rows = db.scalars(select(AuditEventModel).order_by(AuditEventModel.created_at.desc())).all()
-    relevant: list[AuditEventModel] = []
-    for row in rows:
-        if row.case_id:
-            if row.case_id in case_ids:
-                relevant.append(row)
-            continue
-        metadata = json.loads(row.metadata_json)
-        injected = metadata.get("injected") is True
-        if settings.demo_mode:
-            if row.category == "demo" or injected:
-                relevant.append(row)
-        elif row.category != "demo" and not injected:
-            relevant.append(row)
-    return relevant
+    case_ids = select(SubscriptionCaseModel.id).where(SubscriptionCaseModel.source == source)
+    injected = AuditEventModel.metadata_json.contains('"injected":true')
+    global_events = (
+        or_(AuditEventModel.category == "demo", injected)
+        if settings.demo_mode
+        else and_(AuditEventModel.category != "demo", ~injected)
+    )
+    return or_(
+        AuditEventModel.case_id.in_(case_ids),
+        and_(AuditEventModel.case_id.is_(None), global_events),
+    )
 
 
 def list_audit(db: Session, settings: Settings, limit: int = 100) -> list[AuditView]:
-    rows = _mode_audit_rows(db, settings)[:limit]
+    rows = db.scalars(
+        select(AuditEventModel)
+        .where(_mode_audit_filter(settings))
+        .order_by(AuditEventModel.created_at.desc())
+        .limit(limit)
+    ).all()
     return [AuditView(
         id=row.id, case_id=row.case_id, category=row.category, title=row.title, detail=row.detail,
         severity=row.severity, metadata=json.loads(row.metadata_json), created_at=row.created_at,
@@ -827,7 +825,11 @@ def metrics(db: Session, settings: Settings) -> MetricsView:
         if item.case_id in case_ids
     ]
     predicted = sum(max(item.expected_value_rupees, 0) * 100 for item in latest_proposals if item.state in {"proposed", "approved"})
-    blocked = sum(1 for item in _mode_audit_rows(db, settings) if item.category == "safety")
+    blocked = db.scalar(
+        select(func.count())
+        .select_from(AuditEventModel)
+        .where(_mode_audit_filter(settings), AuditEventModel.category == "safety")
+    ) or 0
     return MetricsView(
         display_name=settings.app_display_name,
         demo_mode=settings.demo_mode,
