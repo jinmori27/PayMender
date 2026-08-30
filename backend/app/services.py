@@ -478,6 +478,37 @@ def process_webhook_event(db: Session, webhook_db_id: str, settings: Settings) -
         db.commit()
         return
 
+    if base["status"] == "charged" and _embedded_amount(payload) is None:
+        if case is None:
+            audit(
+                db,
+                "lifecycle",
+                "Organic subscription charge retained without a recovery case",
+                "The successful recurring charge required no PayMender recovery action.",
+                metadata={"subscription_id": base["subscription_id"]},
+            )
+        else:
+            case.status = "charged"
+            case.last_event_created_at = incoming_created
+            existing = db.scalar(
+                select(RecoveryProposalModel)
+                .where(RecoveryProposalModel.case_id == case.id)
+                .order_by(RecoveryProposalModel.created_at.desc())
+            )
+            if existing:
+                existing.state = "resolved_organically"
+            audit(
+                db,
+                "lifecycle",
+                "Subscription resolved by recurring charge",
+                "The subscription recovered through Razorpay's recurring charge, not a PayMender Payment Link.",
+                case_id=case.id,
+            )
+        event.processed_at = utcnow()
+        _redact_processed_webhook(event)
+        db.commit()
+        return
+
     provider_context: ProviderSubscriptionContext | None = None
     if _embedded_amount(payload) is None:
         if case is None:

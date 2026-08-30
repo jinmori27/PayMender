@@ -309,6 +309,37 @@ def test_charged_event_closes_case_even_when_delivered_late(db):
     assert case.recovered_amount_paise == 0
 
 
+def test_subscription_only_charged_event_closes_existing_case_without_enrichment(db, monkeypatch):
+    case = db.get(SubscriptionCaseModel, "case_demo_1")
+    charged_payload = json.loads(payload("subscription.charged"))
+    entity = charged_payload["payload"]["subscription"]["entity"]
+    entity["id"] = case.subscription_id
+    entity["status"] = "charged"
+    entity.pop("notes")
+    event = WebhookEventModel(
+        id="webhook_subscription_only_success",
+        event_id="evt_subscription_only_success",
+        event_type="subscription.charged",
+        payload_json=json.dumps(charged_payload),
+        event_created_at=datetime.now(timezone.utc),
+    )
+    db.add(event)
+    db.commit()
+
+    def unexpected_enrichment(*_args, **_kwargs):
+        raise AssertionError("charged events for existing cases must not fetch an already-paid invoice")
+
+    monkeypatch.setattr("app.services.RazorpayGateway.fetch_subscription_context", unexpected_enrichment)
+    process_webhook_event(db, event.id, get_settings())
+    db.refresh(case)
+    db.refresh(event)
+
+    assert case.status == "charged"
+    assert case.amount_paise == 149_900
+    assert case.recovered_amount_paise == 0
+    assert event.processed_at is not None
+
+
 def test_mismatched_subscription_charge_does_not_close_or_revalue_case(db):
     case = db.get(SubscriptionCaseModel, "case_demo_1")
     original_amount = case.amount_paise
