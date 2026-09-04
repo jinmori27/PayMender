@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -8,7 +9,30 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import JobModel, SubscriptionCaseModel, WebhookEventModel
-from app.worker import claim_and_process_one
+from app.worker import claim_and_process_one, claim_job
+
+
+def test_job_claim_is_atomic_across_concurrent_sessions(db):
+    job = JobModel(
+        id="job_atomic_claim",
+        kind="contained-test",
+        payload_json="{}",
+        status="pending",
+    )
+    db.add(job)
+    db.commit()
+    now = datetime.now(timezone.utc)
+
+    def attempt(_: int) -> str | None:
+        with SessionLocal() as session:
+            claimed = claim_job(session, job.id, get_settings(), now)
+            return claimed.id if claimed else None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claims = list(pool.map(attempt, range(2)))
+
+    assert claims.count(job.id) == 1
+    assert claims.count(None) == 1
 
 
 def test_expired_worker_lease_is_reclaimed_and_completed(db):

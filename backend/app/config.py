@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     contact_cap_7d: int = 3
     min_recovery_amount_paise: int = 10_000
     worker_poll_seconds: float = 0.5
-    job_lease_seconds: int = 30
+    job_lease_seconds: int = 60
 
     @model_validator(mode="after")
     def reject_live_mode(self) -> "Settings":
