@@ -11,12 +11,13 @@
 
 ## Real test evidence
 
-- [ ] One genuine halted Razorpay test subscription entered through a signed webhook.
+- [ ] At least five genuine signed failure events entered across at least three Razorpay test subscriptions.
 - [ ] Invoice enrichment produced the exact INR amount without custom notes.
-- [ ] One Payment Link was created only after approval.
+- [ ] Two actions were explicitly approved and at least one Payment Link was created only after approval.
 - [ ] A matching captured `payment_link.paid` webhook updated recovered rupees.
 - [ ] An ordinary `subscription.charged` event was not attributed to PayMender.
 - [ ] Real Payment Link count is five or fewer.
+- [ ] One policy stop and one duplicate delivery are correlated by provider, case and audit IDs.
 
 ## Synthetic evidence
 

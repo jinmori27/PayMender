@@ -111,6 +111,10 @@ def test_signed_webhook_persists_only_a_pii_minimized_envelope(db):
     assert "+919999999999" not in stored.payload_json
     assert "pii-marker-never-store" not in stored.payload_json
 
+    process_webhook_event(db, webhook_id, get_settings())
+    db.refresh(stored)
+    assert stored.processed_at is not None
+
     db.connection().exec_driver_sql("PRAGMA wal_checkpoint(PASSIVE)")
     database_path = engine.url.database
     assert database_path is not None

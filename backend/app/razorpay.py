@@ -78,7 +78,7 @@ class RazorpayGateway:
             and body.get("reference_id") == reference
             and body.get("amount") == case["amount_paise"]
             and body.get("currency") == "INR"
-            and body.get("status") in {"created", "issued"}
+            and body.get("status") == "created"
             and isinstance(notes, dict)
             and notes.get("paymender_case_id") == case["id"]
             and notes.get("subscription_id") == case["subscription_id"]
@@ -88,13 +88,17 @@ class RazorpayGateway:
             raise RuntimeError("Razorpay Payment Link response does not match the approved action")
         if not isinstance(raw_url, str):
             raise RuntimeError("Razorpay Payment Link URL is invalid")
-        parsed = urlsplit(raw_url)
-        host = (parsed.hostname or "").lower().rstrip(".")
+        try:
+            parsed = urlsplit(raw_url)
+            host = (parsed.hostname or "").lower().rstrip(".")
+            port = parsed.port
+        except ValueError as exc:
+            raise RuntimeError("Razorpay Payment Link URL is invalid") from exc
         if (
             parsed.scheme != "https"
             or parsed.username is not None
             or parsed.password is not None
-            or parsed.port is not None
+            or port is not None
             or host not in self.settings.payment_link_hosts
             or not parsed.path
         ):

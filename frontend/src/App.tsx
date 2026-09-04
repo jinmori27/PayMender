@@ -381,7 +381,7 @@ export default function App() {
             <section className="case-queue"><div className="queue-head"><div><h2>Recovery queue</h2><span>{metrics ? `${cases.length} ${metrics.demo_mode ? "synthetic" : "Razorpay test"} cases` : "Loading cases"}</span></div><div className="queue-count">{metrics?.pending_approvals ?? 0} gated</div></div><div className="case-list">{cases.map((item) => <CaseCard key={item.id} item={item} selected={selectedId === item.id} proposal={latestProposalByCase.get(item.id)} onClick={() => selectCase(item.id)} />)}{metrics && cases.length === 0 && <div className="queue-empty"><Clock3 /><b>Waiting for a failed subscription</b><span>Signed Razorpay test webhooks will appear here after verification.</span></div>}</div></section>
             <Inspector detail={detail} busy={busy} displayName={metrics?.display_name ?? displayName} onDecision={decide} onCopyLink={copyLink} />
           </div>
-          <section className="command-audit card-surface"><div className="section-title"><span>Append-only audit history</span><small>{audit.length} recent events</small></div><AuditTimeline audit={audit.slice(0, 8)} /></section>
+          <section className="command-audit card-surface"><div className="section-title"><span>Run audit history</span><small>{audit.length} recent events · demo reset starts a new run</small></div><AuditTimeline audit={audit.slice(0, 8)} /></section>
         </main>}
         {view === "evaluation" && <EvaluationView data={evaluation} displayName={metrics?.display_name ?? displayName} running={busy} onRun={runEval} />}
         {view === "failures" && metrics?.demo_mode && <FailureLab audit={audit} result={failureResult} running={busy} onInject={inject} />}

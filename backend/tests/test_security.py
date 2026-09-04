@@ -57,7 +57,10 @@ def test_security_headers_are_added_to_api_responses():
     assert response.headers["referrer-policy"] == "no-referrer"
 
 
-def test_public_health_is_minimal_and_configuration_health_requires_operator():
+def test_public_health_is_minimal_and_configuration_health_requires_operator(monkeypatch):
+    monkeypatch.setattr(settings, "demo_mode", True)
+    monkeypatch.setattr(settings, "razorpay_key_id", "rzp_test_example")
+    monkeypatch.setattr(settings, "razorpay_key_secret", "configured-but-isolated")
     client = TestClient(app)
 
     public = client.get("/api/health")
@@ -68,6 +71,7 @@ def test_public_health_is_minimal_and_configuration_health_requires_operator():
     assert protected.status_code == 401
     assert authorized.status_code == 200
     assert authorized.json()["operator_auth"] == "configured"
+    assert authorized.json()["razorpay"] == "demo-adapter"
 
 
 def test_webhook_rate_limit_applies_before_signature_work(monkeypatch):

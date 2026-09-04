@@ -2,7 +2,7 @@
 
 > Working codename for a policy-gated AI subscription revenue-recovery command center, built for Track 03 of the Razorpay AI Buildathon.
 
-PayMender detects failed recurring payments, estimates the net value of each permitted intervention, asks Gemini for a typed explanation and customer-safe message preview, then applies deterministic policy gates before anything can execute. Money-adjacent actions require explicit operator approval. Every proposal, override, approval, failure and result is written to an audit trail.
+PayMender detects failed recurring payments, estimates the net value of each permitted intervention, asks Gemini for a typed explanation and customer-safe message preview, then applies deterministic policy gates before anything can execute. Money-adjacent actions require explicit operator approval. Within each evidence run, every proposal, override, approval, failure and result is appended to the audit history; the explicit synthetic reset starts a new run.
 
 The repository is designed to be cloned and demonstrated without paid infrastructure. It has two explicit modes: a synthetic evidence mode for repeatable evaluation and a Razorpay test mode for the genuine webhook-to-recovery loop. The two sources are isolated in the queue, metrics and audit views.
 
@@ -23,7 +23,8 @@ The repository is designed to be cloned and demonstrated without paid infrastruc
 ```mermaid
 flowchart LR
     R[Razorpay test-mode webhook] -->|raw HMAC + event id| I[FastAPI intake]
-    I --> Q[(SQLite WAL job queue)]
+    I --> S[PII-minimized typed envelope]
+    S --> Q[(SQLite WAL job queue)]
     Q --> E[Razorpay invoice + payment enrichment]
     E --> N[Lifecycle normalizer]
     N --> M[Logistic next-best-action model]
@@ -39,7 +40,7 @@ flowchart LR
 
 The React production build is served by the same FastAPI process. SQLite WAL is the authoritative local-demo store; the database queue retains failed jobs and reclaims expired leases.
 
-More detail: [ARCHITECTURE.md](docs/ARCHITECTURE.md) · [RAZORPAY_TEST_REHEARSAL.md](docs/RAZORPAY_TEST_REHEARSAL.md) · [EVALUATION.md](docs/EVALUATION.md) · [DEMO.md](docs/DEMO.md) · [SECURITY.md](docs/SECURITY.md)
+Start with the [reviewer runbook](docs/REVIEWER_RUNBOOK.md). More detail: [ARCHITECTURE.md](docs/ARCHITECTURE.md) · [RAZORPAY_TEST_REHEARSAL.md](docs/RAZORPAY_TEST_REHEARSAL.md) · [EVALUATION.md](docs/EVALUATION.md) · [DEMO.md](docs/DEMO.md) · [SECURITY.md](docs/SECURITY.md)
 
 ## Quick start
 
@@ -47,13 +48,14 @@ Prerequisites: Python 3.12+, Node.js 20+ and pnpm.
 
 ```powershell
 Copy-Item .env.example .env.local
+.\scripts\Set-OperatorToken.ps1
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r backend\requirements-dev.txt
 
 Set-Location frontend
-pnpm install
+pnpm install --frozen-lockfile --ignore-scripts
 pnpm build
 Set-Location ..
 
@@ -84,14 +86,16 @@ Keep credentials only in ignored `.env.local`. Never paste secrets into issues, 
 - `GEMINI_API_KEY`: activates typed Gemini proposals. Without it, the app uses audited deterministic templates.
 - `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`: must be test-mode credentials; non-`rzp_test_` IDs are rejected at startup.
 - `RAZORPAY_WEBHOOK_SECRET`: separate secret used to verify raw webhook bodies.
-- `OPERATOR_API_TOKEN`: required local command-center credential; use a random value of at least 24 characters. It is held only in browser memory.
+- `OPERATOR_API_TOKEN`: required local command-center credential. `Set-OperatorToken.ps1` writes a 256-bit value into ignored `.env.local` without printing it; the UI holds it only in browser memory.
+- `RAZORPAY_PAYMENT_LINK_HOSTS`: exact HTTPS hostname allowlist for returned Payment Links; defaults to `rzp.io`.
+- `GEMINI_TIMEOUT_SECONDS` and `GEMINI_MAX_OUTPUT_TOKENS`: bound provider time and output consumption.
 - `APP_DISPLAY_NAME`: changes the visible product name without changing internal recovery code.
 
 No outbound SMS, email or WhatsApp integration exists. Generated messages are previews only.
 
 ## Choose the operating mode
 
-`DEMO_MODE=true` seeds seven fictional cases and enables the Reliability Lab. Use this to explain the policy gates and run the reproducible evaluation.
+`DEMO_MODE=true` seeds seven fictional cases and enables the Reliability Lab. It always forces network-isolated adapters, even if test credentials are present. Use this to explain the policy gates and run the reproducible evaluation.
 
 `DEMO_MODE=false` starts with an empty Razorpay test queue, hides reset/failure injection controls and shows only `razorpay_test` cases and evidence. Signed webhooks must arrive through a temporary public HTTPS endpoint. Follow [the real test rehearsal](docs/RAZORPAY_TEST_REHEARSAL.md) before recording the submission video.
 
@@ -101,7 +105,7 @@ No outbound SMS, email or WhatsApp integration exists. Generated messages are pr
 .\scripts\Verify-PayMender.ps1
 ```
 
-The real sandbox demo should create at most five Payment Links even though the Razorpay test account permits more. The remaining evaluation is entirely synthetic and makes no production uplift claim.
+Verification runs the full backend suite, frontend checks/build, dependency audits, tracked-secret scanning and four Playwright reviewer flows. The real sandbox demo should create at most five Payment Links even though the Razorpay test account permits more. The remaining evaluation is entirely synthetic and makes no production uplift claim.
 
 ## Scope and limitations
 

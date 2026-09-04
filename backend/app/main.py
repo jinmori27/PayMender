@@ -124,7 +124,7 @@ def health_details() -> dict:
         "display_name": settings.app_display_name,
         "demo_mode": settings.demo_mode,
         "gemini": "configured" if settings.gemini_enabled else "fallback",
-        "razorpay": "configured-test" if settings.razorpay_enabled else "demo-adapter",
+        "razorpay": "configured-test" if settings.external_razorpay_enabled else "demo-adapter",
         "operator_auth": "configured" if settings.operator_api_token else "required",
     }
 

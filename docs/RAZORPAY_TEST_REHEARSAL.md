@@ -30,14 +30,15 @@ Use the same webhook secret as `.env.local` and subscribe to:
 
 Do not expose API keys in the tunnel command, URL, terminal recording or webhook dashboard screenshots.
 
-## 3. Create the halted test case
+## 3. Create the provider-authentic batch
 
-1. In Razorpay test mode, create a plan and subscription.
-2. Authenticate the subscription using Razorpay's test flow.
-3. Simulate failed recurring charges until Razorpay marks the subscription halted. Razorpay documents that the test subscription reaches halted after four failed attempts.
-4. Confirm the signed webhook is accepted quickly.
-5. In the command center, watch the case move from `Fetching amount` to a verified outstanding amount.
-6. Verify the audit shows the selected invoice and failed-payment context without customer name, email, phone or address.
+1. In Razorpay test mode, create at least three subscriptions under test plans.
+2. Authenticate them using Razorpay's test flow.
+3. Produce at least five signed failure events across those subscriptions, including pending and halted states. Razorpay documents that a test subscription reaches halted after four failed attempts.
+4. Confirm each provider event ID receives a 2XX response and is correlated to one PayMender webhook record.
+5. In the command center, watch each case move from `Fetching amount` to a verified outstanding amount.
+6. Verify the audit shows selected invoice and failed-payment context without customer name, email, phone or address.
+7. Demonstrate one duplicate event ID being accepted as an idempotent no-op and one policy stop where no external action is possible.
 
 If enrichment fails after three worker attempts, the case must say `Needs attention`, propose no money action and retain only a redacted event envelope.
 
@@ -52,7 +53,7 @@ Before approval, verify all of these on screen:
 - no active recovery link exists;
 - the preview says notifications are disabled and the link expires in 48 hours.
 
-Approve `CREATE_RECOVERY_LINK` once. Use **Open test link** to complete a captured Razorpay test payment. PayMender must then receive a matching `payment_link.paid` event and move exactly that amount into **Confirmed recovered**.
+Approve two gated actions, with at least one `CREATE_RECOVERY_LINK`. Use **Open test link** to complete one captured Razorpay test payment. PayMender must then receive a matching `payment_link.paid` event and move exactly that amount into **Confirmed recovered**.
 
 Reject the result if an unrelated payment, mismatched link, mismatched amount, non-captured payment or ordinary `subscription.charged` event is counted as PayMender recovery. A recurring charge is an organic resolution only.
 
@@ -64,6 +65,7 @@ Reject the result if an unrelated payment, mismatched link, mismatched amount, n
 - exact amount and test-mode warning;
 - created link reference, never credentials;
 - matching captured webhook and recovered rupees;
+- a correlation table containing at least five event IDs, three subscription IDs, two proposal/approval IDs, one execution ID and the associated audit IDs;
 - audit event for one contained failure;
 - synthetic evaluation with its disclaimer visible.
 

@@ -62,7 +62,7 @@ def test_existing_exact_payment_link_is_reused_without_post(monkeypatch):
         return StubResponse({"payment_links": [{
             "id": "plink_existing",
             "short_url": "https://rzp.io/existing",
-            "status": "issued",
+            "status": "created",
             "amount": case["amount_paise"],
             "amount_paid": 0,
             "currency": "INR",
@@ -85,7 +85,7 @@ def test_conflicting_existing_reference_fails_closed(monkeypatch):
     monkeypatch.setattr("app.razorpay.httpx.get", lambda *_args, **_kwargs: StubResponse({"payment_links": [{
         "id": "plink_conflict",
         "short_url": "https://rzp.io/conflict",
-        "status": "issued",
+        "status": "created",
         "amount": 1,
         "currency": "INR",
         "reference_id": reference,
@@ -104,6 +104,7 @@ def test_conflicting_existing_reference_fails_closed(monkeypatch):
     "http://rzp.io/insecure",
     "https://user:password@rzp.io/credentials",
     "https://untrusted.example/phish",
+    "https://rzp.io:invalid/path",
 ])
 def test_created_payment_link_rejects_untrusted_urls(monkeypatch, url):
     case = recovery_case()
@@ -117,7 +118,7 @@ def test_created_payment_link_rejects_untrusted_urls(monkeypatch, url):
         lambda *_args, **_kwargs: StubResponse({
             "id": "plink_created",
             "short_url": url,
-            "status": "issued",
+            "status": "created",
             "amount": case["amount_paise"],
             "amount_paid": 0,
             "currency": "INR",
@@ -146,9 +147,37 @@ def test_created_payment_link_rejects_mismatched_provider_fields(monkeypatch):
         lambda *_args, **_kwargs: StubResponse({
             "id": "plink_created",
             "short_url": "https://rzp.io/created",
-            "status": "issued",
+            "status": "created",
             "amount": case["amount_paise"] + 1,
             "amount_paid": 0,
+            "currency": "INR",
+            "reference_id": reference,
+            "notes": {
+                "paymender_case_id": case["id"],
+                "subscription_id": case["subscription_id"],
+                "mode": "test-only",
+            },
+        }),
+    )
+
+    with pytest.raises(RuntimeError, match="does not match"):
+        RazorpayGateway(live_settings()).create_recovery_link(case)
+
+
+def test_created_payment_link_rejects_undocumented_status(monkeypatch):
+    case = recovery_case()
+    reference = f"pm-{case['id'][-20:]}"
+    monkeypatch.setattr(
+        "app.razorpay.httpx.get",
+        lambda *_args, **_kwargs: StubResponse({"payment_links": []}),
+    )
+    monkeypatch.setattr(
+        "app.razorpay.httpx.post",
+        lambda *_args, **_kwargs: StubResponse({
+            "id": "plink_created",
+            "short_url": "https://rzp.io/created",
+            "status": "issued",
+            "amount": case["amount_paise"],
             "currency": "INR",
             "reference_id": reference,
             "notes": {
