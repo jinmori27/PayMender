@@ -5,12 +5,13 @@ import hmac
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select
 
 from app.config import get_settings
-from app.database import SessionLocal
+from app.database import SessionLocal, engine
 from app.models import AuditEventModel, JobModel, SubscriptionCaseModel, WebhookEventModel
 from app.razorpay import ProviderSubscriptionContext
 from app.services import accept_webhook, normalize_webhook, process_webhook_event, verify_webhook
@@ -36,11 +37,87 @@ def test_signature_uses_untouched_raw_body():
 
 def test_normalizes_subscription_lifecycle():
     body = json.loads(payload())
-    normalized = normalize_webhook(body)
+    normalized = normalize_webhook(body, demo_mode=True)
     assert normalized["subscription_id"] == "sub_test_1"
     assert normalized["status"] == "halted"
     assert normalized["failure_reason"] == "expired_card"
     assert normalized["amount_paise"] == 99_900
+
+
+def test_real_mode_ignores_untrusted_subscription_notes_for_money_and_reason():
+    body = json.loads(payload())
+    body["payload"]["subscription"]["entity"]["notes"] = {
+        "amount_paise": 999_999_999,
+        "failure_reason": "expired card",
+    }
+    context = ProviderSubscriptionContext(
+        subscription_id="sub_test_1",
+        invoice_id="inv_authoritative",
+        order_id="order_authoritative",
+        amount_paise=49_900,
+        currency="INR",
+        failure_reason="issuer_downtime",
+        retry_count=2,
+        prior_successes=4,
+    )
+
+    normalized = normalize_webhook(body, context, demo_mode=False)
+
+    assert normalized["amount_paise"] == 49_900
+    assert normalized["failure_reason"] == "issuer_downtime"
+
+
+def test_signed_webhook_persists_only_a_pii_minimized_envelope(db):
+    raw = json.dumps({
+        "event": "subscription.halted",
+        "created_at": int(datetime.now(timezone.utc).timestamp()),
+        "payload": {
+            "subscription": {
+                "entity": {
+                    "id": "sub_pii_minimized",
+                    "status": "halted",
+                    "auth_attempts": 3,
+                    "paid_count": 2,
+                    "notes": {
+                        "amount_paise": 89_900,
+                        "failure_reason": "expired card",
+                        "email": "never-store@example.test",
+                        "phone": "+919999999999",
+                    },
+                }
+            },
+            "customer": {
+                "entity": {
+                    "email": "never-store@example.test",
+                    "contact": "+919999999999",
+                }
+            },
+        },
+        "unrelated": "pii-marker-never-store",
+    }, separators=(",", ":")).encode()
+
+    duplicate, webhook_id = accept_webhook(
+        db,
+        raw_body=raw,
+        signature=signed(raw),
+        event_id="evt_pii_minimized",
+        settings=get_settings(),
+    )
+
+    assert duplicate is False
+    stored = db.get(WebhookEventModel, webhook_id)
+    assert stored is not None
+    assert "never-store" not in stored.payload_json
+    assert "+919999999999" not in stored.payload_json
+    assert "pii-marker-never-store" not in stored.payload_json
+
+    db.connection().exec_driver_sql("PRAGMA wal_checkpoint(PASSIVE)")
+    database_path = engine.url.database
+    assert database_path is not None
+    paths = [database_path, f"{database_path}-wal"]
+    persisted = b"".join(Path(path).read_bytes() for path in paths if Path(path).exists())
+    assert b"never-store@example.test" not in persisted
+    assert b"pii-marker-never-store" not in persisted
 
 
 def test_accepts_official_subscription_only_halted_payload(db):
@@ -137,7 +214,7 @@ def test_retry_count_uses_auth_attempts_not_remaining_billing_cycles():
     entity["auth_attempts"] = 2
     entity["remaining_count"] = 42
 
-    normalized = normalize_webhook(body)
+    normalized = normalize_webhook(body, demo_mode=True)
 
     assert normalized["retry_count"] == 2
 

@@ -109,7 +109,8 @@ def accept_webhook(
     payload = json.loads(raw_body)
     if not isinstance(payload, dict):
         raise ValueError("Webhook payload must be a JSON object")
-    validate_webhook_payload(payload)
+    validate_webhook_payload(payload, demo_mode=settings.demo_mode)
+    sanitized_payload = sanitize_webhook_payload(payload, demo_mode=settings.demo_mode)
     event_type = str(payload.get("event", "unknown"))
     created_ts = payload.get("created_at")
     created_at = datetime.fromtimestamp(created_ts, timezone.utc) if isinstance(created_ts, (int, float)) else None
@@ -117,7 +118,7 @@ def accept_webhook(
         id=new_id("evt"),
         event_id=event_id,
         event_type=event_type,
-        payload_json=raw_body.decode("utf-8"),
+        payload_json=json_dumps(sanitized_payload),
         event_created_at=created_at,
     )
     try:
@@ -200,7 +201,7 @@ def normalize_payment_link_paid(payload: dict) -> dict:
     }
 
 
-def _subscription_event_base(payload: dict) -> dict:
+def _subscription_event_base(payload: dict, *, demo_mode: bool = False) -> dict:
     event_type = str(payload.get("event", ""))
     if event_type not in SUPPORTED_SUBSCRIPTION_EVENTS:
         raise ValueError(f"Unsupported Razorpay event: {event_type or 'missing'}")
@@ -210,11 +211,11 @@ def _subscription_event_base(payload: dict) -> dict:
     payment_notes_value = payment.get("notes") or {}
     payment_notes = payment_notes_value if isinstance(payment_notes_value, dict) else {}
     demo_value = payload.get("demo") or {}
-    demo = demo_value if isinstance(demo_value, dict) else {}
+    demo = demo_value if demo_mode and isinstance(demo_value, dict) else {}
     subscription_id = (
         subscription.get("id")
         or invoice.get("subscription_id")
-        or payment_notes.get("subscription_id")
+        or (payment_notes.get("subscription_id") if demo_mode else None)
         or demo.get("subscription_id")
     )
     if not isinstance(subscription_id, str) or not subscription_id.strip():
@@ -247,32 +248,106 @@ def _subscription_event_base(payload: dict) -> dict:
     }
 
 
-def _embedded_amount(payload: dict) -> Any:
-    base = _subscription_event_base(payload)
+def _embedded_amount(payload: dict, *, demo_mode: bool = False) -> Any:
+    base = _subscription_event_base(payload, demo_mode=demo_mode)
     subscription = base["subscription"]
     payment = base["payment"]
     invoice = base["invoice"]
     demo = base["demo"]
     notes_value = subscription.get("notes") or {}
     notes = notes_value if isinstance(notes_value, dict) else {}
-    return payment.get("amount") or invoice.get("amount_due") or invoice.get("amount") or notes.get("amount_paise") or demo.get("amount_paise")
+    amount = payment.get("amount") or invoice.get("amount_due") or invoice.get("amount")
+    if amount is not None:
+        return amount
+    if demo_mode:
+        return notes.get("amount_paise") or demo.get("amount_paise")
+    return None
 
 
-def validate_webhook_payload(payload: dict) -> None:
+def validate_webhook_payload(payload: dict, *, demo_mode: bool = False) -> None:
     event_type = str(payload.get("event", ""))
     if event_type not in SUPPORTED_EVENTS:
         raise ValueError(f"Unsupported Razorpay event: {event_type or 'missing'}")
     if event_type == "payment_link.paid":
         normalize_payment_link_paid(payload)
     else:
-        _subscription_event_base(payload)
+        _subscription_event_base(payload, demo_mode=demo_mode)
+
+
+def _copy_fields(source: dict, fields: tuple[str, ...]) -> dict:
+    return {field: source[field] for field in fields if field in source}
+
+
+def sanitize_webhook_payload(payload: dict, *, demo_mode: bool = False) -> dict:
+    """Persist only fields required for deterministic processing after HMAC verification."""
+    event_type = str(payload.get("event", ""))
+    sanitized: dict[str, Any] = {"event": event_type}
+    if isinstance(payload.get("created_at"), (int, float)):
+        sanitized["created_at"] = payload["created_at"]
+
+    if event_type == "payment_link.paid":
+        payment_link = _entity(payload, "payment_link")
+        payment = _entity(payload, "payment")
+        notes_value = payment_link.get("notes")
+        notes = notes_value if isinstance(notes_value, dict) else {}
+        sanitized["payload"] = {
+            "payment_link": {"entity": {
+                **_copy_fields(payment_link, (
+                    "id", "status", "amount", "amount_paid", "currency", "reference_id",
+                )),
+                "notes": _copy_fields(notes, ("paymender_case_id", "subscription_id", "mode")),
+            }},
+            "payment": {"entity": _copy_fields(payment, ("id", "status", "amount"))},
+        }
+        return sanitized
+
+    subscription = _entity(payload, "subscription")
+    payment = _entity(payload, "payment")
+    invoice = _entity(payload, "invoice")
+    sanitized["payload"] = {
+        "subscription": {"entity": _copy_fields(subscription, (
+            "id", "status", "auth_attempts", "paid_count", "charge_at",
+        ))},
+    }
+    if payment:
+        payment_fields = _copy_fields(payment, (
+            "id", "status", "amount", "error_reason", "error_description", "order_id",
+        ))
+        payment_notes_value = payment.get("notes")
+        payment_notes = payment_notes_value if isinstance(payment_notes_value, dict) else {}
+        if demo_mode and payment_notes.get("subscription_id"):
+            payment_fields["notes"] = {"subscription_id": payment_notes["subscription_id"]}
+        sanitized["payload"]["payment"] = {"entity": payment_fields}
+    if invoice:
+        sanitized["payload"]["invoice"] = {"entity": _copy_fields(invoice, (
+            "id", "subscription_id", "order_id", "status", "currency", "amount_due", "amount",
+        ))}
+
+    if demo_mode:
+        demo_value = payload.get("demo")
+        demo = demo_value if isinstance(demo_value, dict) else {}
+        notes_value = subscription.get("notes")
+        notes = notes_value if isinstance(notes_value, dict) else {}
+        sanitized_demo = _copy_fields(demo, (
+            "subscription_id", "amount_paise", "failure_reason", "retry_count",
+            "prior_successes", "days_overdue", "previous_interventions", "contacts_7d",
+            "customer_name",
+        ))
+        for field in ("amount_paise", "failure_reason"):
+            if field not in sanitized_demo and field in notes:
+                sanitized_demo[field] = notes[field]
+        if sanitized_demo:
+            sanitized["demo"] = sanitized_demo
+    return sanitized
 
 
 def normalize_webhook(
     payload: dict,
     provider_context: ProviderSubscriptionContext | None = None,
+    *,
+    demo_mode: bool = False,
 ) -> dict:
-    base = _subscription_event_base(payload)
+    base = _subscription_event_base(payload, demo_mode=demo_mode)
     subscription = base["subscription"]
     payment = base["payment"]
     invoice = base["invoice"]
@@ -283,7 +358,7 @@ def normalize_webhook(
     status = base["status"]
     if provider_context and provider_context.subscription_id != subscription_id:
         raise RuntimeError("Razorpay enrichment subscription does not match the webhook")
-    amount_value = _embedded_amount(payload)
+    amount_value = _embedded_amount(payload, demo_mode=demo_mode)
     if amount_value is None and provider_context:
         amount_value = provider_context.amount_paise
     amount = _validated_amount(amount_value, "outstanding amount")
@@ -291,8 +366,8 @@ def normalize_webhook(
         payment.get("error_reason")
         or payment.get("error_description")
         or (provider_context.failure_reason if provider_context else None)
-        or notes.get("failure_reason")
-        or demo.get("failure_reason")
+        or (notes.get("failure_reason") if demo_mode else None)
+        or (demo.get("failure_reason") if demo_mode else None)
         or "unknown"
     )
     reason_text = str(reason).lower()
@@ -360,7 +435,8 @@ def mark_webhook_enrichment_failed(db: Session, webhook_db_id: str) -> None:
     if not event or event.event_type not in {"subscription.pending", "subscription.halted", "subscription.charged"}:
         return
     try:
-        base = _subscription_event_base(json.loads(event.payload_json))
+        payload = json.loads(event.payload_json)
+        base = _subscription_event_base(payload, demo_mode=bool(payload.get("demo")))
     except (TypeError, ValueError, json.JSONDecodeError):
         return
     case = db.scalar(
@@ -434,7 +510,7 @@ def process_webhook_event(db: Session, webhook_db_id: str, settings: Settings) -
     if event.event_type == "payment_link.paid":
         _process_payment_link_paid(db, event, payload)
         return
-    base = _subscription_event_base(payload)
+    base = _subscription_event_base(payload, demo_mode=settings.demo_mode)
     case = db.scalar(
         select(SubscriptionCaseModel).where(
             SubscriptionCaseModel.subscription_id == base["subscription_id"]
@@ -478,7 +554,7 @@ def process_webhook_event(db: Session, webhook_db_id: str, settings: Settings) -
         db.commit()
         return
 
-    if base["status"] == "charged" and _embedded_amount(payload) is None:
+    if base["status"] == "charged" and _embedded_amount(payload, demo_mode=settings.demo_mode) is None:
         if case is None:
             audit(
                 db,
@@ -510,7 +586,7 @@ def process_webhook_event(db: Session, webhook_db_id: str, settings: Settings) -
         return
 
     provider_context: ProviderSubscriptionContext | None = None
-    if _embedded_amount(payload) is None:
+    if _embedded_amount(payload, demo_mode=settings.demo_mode) is None:
         if case is None:
             case = SubscriptionCaseModel(
                 id=new_id("case"),
@@ -545,7 +621,7 @@ def process_webhook_event(db: Session, webhook_db_id: str, settings: Settings) -
             prior_successes=base["prior_successes"],
         )
 
-    normalized = normalize_webhook(payload, provider_context)
+    normalized = normalize_webhook(payload, provider_context, demo_mode=settings.demo_mode)
     case = db.scalar(
         select(SubscriptionCaseModel).where(
             SubscriptionCaseModel.subscription_id == normalized["subscription_id"]
