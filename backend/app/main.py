@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from .config import get_settings
 from .database import SessionLocal, get_db, init_db
+from .rate_limit import FixedWindowRateLimiter
 from .schemas import (
     ApprovalRequest,
     AuditView,
@@ -38,6 +39,11 @@ from .worker import worker_loop
 
 
 settings = get_settings()
+rate_limiter = FixedWindowRateLimiter(settings.rate_limit_max_keys)
+
+
+def _client_key(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
 
 
 @asynccontextmanager
@@ -86,7 +92,17 @@ async def add_security_headers(request: Request, call_next):  # type: ignore[no-
     return response
 
 
-def require_operator(x_operator_token: str = Header(default="", alias="X-Operator-Token")) -> None:
+def require_operator(
+    request: Request,
+    x_operator_token: str = Header(default="", alias="X-Operator-Token"),
+) -> None:
+    if request.url.path == "/api/operator/session":
+        rate_limiter.check(
+            "operator-session",
+            _client_key(request),
+            limit=settings.operator_session_rate_limit_per_15_minutes,
+            window_seconds=15 * 60,
+        )
     expected = settings.operator_api_token.strip()
     supplied = x_operator_token.strip()
     if not expected:
@@ -97,6 +113,11 @@ def require_operator(x_operator_token: str = Header(default="", alias="X-Operato
 
 @app.get("/api/health")
 def health() -> dict:
+    return {"status": "ok", "display_name": settings.app_display_name}
+
+
+@app.get("/api/health/details", dependencies=[Depends(require_operator)])
+def health_details() -> dict:
     return {
         "status": "ok",
         "display_name": settings.app_display_name,
@@ -114,6 +135,12 @@ async def razorpay_webhook(
     x_razorpay_event_id: str = Header(default=""),
     db: Session = Depends(get_db),
 ) -> WebhookReceipt:
+    rate_limiter.check(
+        "webhook",
+        _client_key(request),
+        limit=settings.webhook_rate_limit_per_minute,
+        window_seconds=60,
+    )
     if not x_razorpay_event_id:
         raise HTTPException(status_code=400, detail="x-razorpay-event-id is required")
     content_length = request.headers.get("content-length")
@@ -191,7 +218,13 @@ def get_audit(limit: int = 100, db: Session = Depends(get_db)) -> list[AuditView
 
 
 @app.post("/api/evaluations", response_model=EvaluationSummary, dependencies=[Depends(require_operator)])
-def create_evaluation(db: Session = Depends(get_db)) -> EvaluationSummary:
+def create_evaluation(request: Request, db: Session = Depends(get_db)) -> EvaluationSummary:
+    rate_limiter.check(
+        "evaluation",
+        _client_key(request),
+        limit=settings.evaluation_rate_limit_per_minute,
+        window_seconds=60,
+    )
     return save_evaluation(db, settings)
 
 

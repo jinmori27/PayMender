@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite:///{(ROOT_DIR / 'paymender.sqlite3').as_posix()}"
     operator_api_token: str = ""
     max_webhook_body_bytes: int = Field(default=262_144, ge=1_024, le=1_048_576)
+    webhook_rate_limit_per_minute: int = Field(default=60, ge=1, le=10_000)
+    operator_session_rate_limit_per_15_minutes: int = Field(default=10, ge=1, le=1_000)
+    evaluation_rate_limit_per_minute: int = Field(default=2, ge=1, le=100)
+    rate_limit_max_keys: int = Field(default=10_000, ge=100, le=100_000)
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.7-flash"
