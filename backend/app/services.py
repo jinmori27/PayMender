@@ -765,7 +765,7 @@ def approve_proposal(db: Session, case_id: str, decision: str, note: str, settin
     action = RecoveryAction(proposal.recommended_action)
     if action == RecoveryAction.CREATE_RECOVERY_LINK:
         real_count = db.scalar(select(func.count()).select_from(ActionExecutionModel).where(ActionExecutionModel.adapter == "razorpay-test")) or 0
-        if settings.razorpay_enabled and real_count >= settings.max_real_payment_links:
+        if settings.external_razorpay_enabled and real_count >= settings.max_real_payment_links:
             proposal.state = "blocked"
             audit(db, "safety", "Sandbox link cap reached", "No additional real test links are permitted.", case_id=case_id, severity="warning")
             db.commit()
@@ -789,7 +789,7 @@ def approve_proposal(db: Session, case_id: str, decision: str, note: str, settin
         else:
             execution.status = "executing"
             execution.error = None
-        execution.adapter = "razorpay-test" if settings.razorpay_enabled else "demo"
+        execution.adapter = "razorpay-test" if settings.external_razorpay_enabled else "demo"
         db.flush()
         try:
             result = RazorpayGateway(settings).create_recovery_link(case_as_dict(case))

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     razorpay_key_secret: str = ""
     razorpay_webhook_secret: str = ""
     razorpay_mode: str = "test"
+    razorpay_payment_link_hosts: str = "rzp.io"
     max_real_payment_links: int = Field(default=5, ge=0, le=5)
 
     contact_cap_7d: int = 3
@@ -56,6 +57,18 @@ class Settings(BaseSettings):
     @property
     def razorpay_enabled(self) -> bool:
         return bool(self.razorpay_key_id and self.razorpay_key_secret)
+
+    @property
+    def external_razorpay_enabled(self) -> bool:
+        return not self.demo_mode and self.razorpay_enabled
+
+    @property
+    def payment_link_hosts(self) -> frozenset[str]:
+        return frozenset(
+            host.strip().lower().rstrip(".")
+            for host in self.razorpay_payment_link_hosts.split(",")
+            if host.strip()
+        )
 
 
 @lru_cache

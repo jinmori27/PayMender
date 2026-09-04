@@ -18,7 +18,11 @@ class StubResponse:
 
 
 def live_settings():
-    return get_settings().model_copy(update={"razorpay_key_id": "rzp_test_example", "razorpay_key_secret": "secret"})
+    return get_settings().model_copy(update={
+        "demo_mode": False,
+        "razorpay_key_id": "rzp_test_example",
+        "razorpay_key_secret": "secret",
+    })
 
 
 def recovery_case() -> dict:
@@ -29,6 +33,23 @@ def recovery_case() -> dict:
         "amount_paise": 99_900,
         "active_recovery_link_id": None,
     }
+
+
+def test_demo_mode_never_calls_razorpay_even_when_credentials_exist(monkeypatch):
+    settings = live_settings().model_copy(update={"demo_mode": True})
+    monkeypatch.setattr(
+        "app.razorpay.httpx.get",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network call in demo mode")),
+    )
+    monkeypatch.setattr(
+        "app.razorpay.httpx.post",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network call in demo mode")),
+    )
+
+    result = RazorpayGateway(settings).create_recovery_link(recovery_case())
+
+    assert result.adapter == "demo"
+    assert result.id.startswith("plink_demo_")
 
 
 def test_existing_exact_payment_link_is_reused_without_post(monkeypatch):
@@ -77,6 +98,69 @@ def test_conflicting_existing_reference_fails_closed(monkeypatch):
         assert "conflicting" in str(exc).lower()
     else:
         raise AssertionError("Conflicting Razorpay reference was reused")
+
+
+@pytest.mark.parametrize("url", [
+    "http://rzp.io/insecure",
+    "https://user:password@rzp.io/credentials",
+    "https://untrusted.example/phish",
+])
+def test_created_payment_link_rejects_untrusted_urls(monkeypatch, url):
+    case = recovery_case()
+    reference = f"pm-{case['id'][-20:]}"
+    monkeypatch.setattr(
+        "app.razorpay.httpx.get",
+        lambda *_args, **_kwargs: StubResponse({"payment_links": []}),
+    )
+    monkeypatch.setattr(
+        "app.razorpay.httpx.post",
+        lambda *_args, **_kwargs: StubResponse({
+            "id": "plink_created",
+            "short_url": url,
+            "status": "issued",
+            "amount": case["amount_paise"],
+            "amount_paid": 0,
+            "currency": "INR",
+            "reference_id": reference,
+            "notes": {
+                "paymender_case_id": case["id"],
+                "subscription_id": case["subscription_id"],
+                "mode": "test-only",
+            },
+        }),
+    )
+
+    with pytest.raises(RuntimeError, match="URL"):
+        RazorpayGateway(live_settings()).create_recovery_link(case)
+
+
+def test_created_payment_link_rejects_mismatched_provider_fields(monkeypatch):
+    case = recovery_case()
+    reference = f"pm-{case['id'][-20:]}"
+    monkeypatch.setattr(
+        "app.razorpay.httpx.get",
+        lambda *_args, **_kwargs: StubResponse({"payment_links": []}),
+    )
+    monkeypatch.setattr(
+        "app.razorpay.httpx.post",
+        lambda *_args, **_kwargs: StubResponse({
+            "id": "plink_created",
+            "short_url": "https://rzp.io/created",
+            "status": "issued",
+            "amount": case["amount_paise"] + 1,
+            "amount_paid": 0,
+            "currency": "INR",
+            "reference_id": reference,
+            "notes": {
+                "paymender_case_id": case["id"],
+                "subscription_id": case["subscription_id"],
+                "mode": "test-only",
+            },
+        }),
+    )
+
+    with pytest.raises(RuntimeError, match="does not match"):
+        RazorpayGateway(live_settings()).create_recovery_link(case)
 
 
 def test_subscription_context_uses_latest_actionable_invoice_and_failed_payment(monkeypatch):

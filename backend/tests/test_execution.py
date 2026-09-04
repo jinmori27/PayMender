@@ -69,7 +69,13 @@ def test_razorpay_failure_retries_without_duplicate_execution(db, monkeypatch):
 
 def test_real_attempt_is_counted_even_when_upstream_result_is_ambiguous(db, monkeypatch):
     case = db.get(SubscriptionCaseModel, "case_demo_1")
-    settings = get_settings().model_copy(update={"razorpay_key_id": "rzp_test_example", "razorpay_key_secret": "secret"})
+    case.source = "razorpay_test"
+    db.commit()
+    settings = get_settings().model_copy(update={
+        "demo_mode": False,
+        "razorpay_key_id": "rzp_test_example",
+        "razorpay_key_secret": "secret",
+    })
 
     monkeypatch.setattr(RazorpayGateway, "create_recovery_link", lambda _gateway, _case: (_ for _ in ()).throw(TimeoutError()))
     with pytest.raises(TimeoutError):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -60,9 +61,45 @@ class RazorpayGateway:
 
     @property
     def _auth(self) -> tuple[str, str]:
-        if not self.settings.razorpay_enabled:
+        if not self.settings.external_razorpay_enabled:
             raise RuntimeError("Razorpay test credentials are not configured")
         return self.settings.razorpay_key_id, self.settings.razorpay_key_secret
+
+    def _validated_payment_link(self, body: object, case: dict, reference: str) -> PaymentLinkResult:
+        if not isinstance(body, dict):
+            raise RuntimeError("Razorpay Payment Link response is invalid")
+        link_id = body.get("id")
+        raw_url = body.get("short_url")
+        notes = body.get("notes")
+        matches = (
+            isinstance(link_id, str)
+            and link_id.startswith("plink_")
+            and len(link_id) <= 120
+            and body.get("reference_id") == reference
+            and body.get("amount") == case["amount_paise"]
+            and body.get("currency") == "INR"
+            and body.get("status") in {"created", "issued"}
+            and isinstance(notes, dict)
+            and notes.get("paymender_case_id") == case["id"]
+            and notes.get("subscription_id") == case["subscription_id"]
+            and notes.get("mode") == "test-only"
+        )
+        if not matches:
+            raise RuntimeError("Razorpay Payment Link response does not match the approved action")
+        if not isinstance(raw_url, str):
+            raise RuntimeError("Razorpay Payment Link URL is invalid")
+        parsed = urlsplit(raw_url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if (
+            parsed.scheme != "https"
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port is not None
+            or host not in self.settings.payment_link_hosts
+            or not parsed.path
+        ):
+            raise RuntimeError("Razorpay Payment Link URL is invalid")
+        return PaymentLinkResult(id=link_id, url=raw_url, adapter="razorpay-test")
 
     def fetch_subscription_context(
         self,
@@ -156,14 +193,14 @@ class RazorpayGateway:
             raise ValueError("An active recovery link already exists")
 
         reference = f"pm-{case['id'][-20:]}"
-        if not self.settings.razorpay_enabled:
-            if not self.settings.demo_mode:
-                raise RuntimeError("Razorpay test credentials are not configured")
+        if self.settings.demo_mode:
             return PaymentLinkResult(
                 id=f"plink_demo_{case['id'][-12:]}",
                 url=f"https://example.invalid/pay/{reference}",
                 adapter="demo",
             )
+        if not self.settings.razorpay_enabled:
+            raise RuntimeError("Razorpay test credentials are not configured")
 
         payload = {
             "amount": case["amount_paise"],
@@ -188,23 +225,19 @@ class RazorpayGateway:
             timeout=12,
         )
         existing_response.raise_for_status()
-        existing_links = existing_response.json().get("payment_links", [])
+        existing_body = existing_response.json()
+        if not isinstance(existing_body, dict) or not isinstance(existing_body.get("payment_links"), list):
+            raise RuntimeError("Razorpay returned an invalid Payment Link collection")
+        existing_links = existing_body["payment_links"]
         if existing_links:
-            exact = [
-                link for link in existing_links
-                if link.get("reference_id") == reference
-                and link.get("amount") == case["amount_paise"]
-                and link.get("currency") == "INR"
-                and link.get("status") in {"created", "issued", "partially_paid"}
-                and isinstance(link.get("notes"), dict)
-                and link["notes"].get("paymender_case_id") == case["id"]
-                and link["notes"].get("subscription_id") == case["subscription_id"]
-                and isinstance(link.get("id"), str)
-                and isinstance(link.get("short_url"), str)
-            ]
-            if len(exact) != 1 or len(existing_links) != 1:
+            if len(existing_links) != 1:
                 raise RuntimeError("A conflicting Razorpay Payment Link already uses this recovery reference")
-            return PaymentLinkResult(id=exact[0]["id"], url=exact[0]["short_url"], adapter="razorpay-test")
+            try:
+                return self._validated_payment_link(existing_links[0], case, reference)
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    "A conflicting Razorpay Payment Link already uses this recovery reference"
+                ) from exc
 
         response = httpx.post(
             "https://api.razorpay.com/v1/payment_links",
@@ -214,4 +247,4 @@ class RazorpayGateway:
         )
         response.raise_for_status()
         body = response.json()
-        return PaymentLinkResult(id=body["id"], url=body["short_url"], adapter="razorpay-test")
+        return self._validated_payment_link(body, case, reference)
