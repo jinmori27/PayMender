@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.7-flash"
     gemini_fallback_model: str = "gemini-3.5-flash-lite"
+    gemini_timeout_seconds: int = Field(default=15, ge=1, le=60)
+    gemini_max_output_tokens: int = Field(default=512, ge=64, le=2_048)
 
     razorpay_key_id: str = ""
     razorpay_key_secret: str = ""

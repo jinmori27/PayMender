@@ -78,13 +78,20 @@ class GeminiAdvisor:
             from google import genai
             from google.genai import types
 
-            client = genai.Client(api_key=self.settings.gemini_api_key)
+            client = genai.Client(
+                api_key=self.settings.gemini_api_key,
+                http_options=types.HttpOptions(
+                    timeout=self.settings.gemini_timeout_seconds * 1_000,
+                    retry_options=types.HttpRetryOptions(attempts=1),
+                ),
+            )
             for model_name in (self.settings.gemini_model, self.settings.gemini_fallback_model):
                 try:
                     response = client.models.generate_content(
                         model=model_name,
                         contents=json.dumps(prompt),
                         config=types.GenerateContentConfig(
+                            max_output_tokens=self.settings.gemini_max_output_tokens,
                             response_mime_type="application/json",
                             response_schema=GeminiDecision,
                         ),

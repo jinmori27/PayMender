@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,7 +36,10 @@ class GeminiDecision(BaseModel):
     recommended_action: RecoveryAction
     confidence: float = Field(ge=0, le=1)
     explanation: str = Field(min_length=10, max_length=800)
-    evidence: list[str] = Field(min_length=1, max_length=5)
+    evidence: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        min_length=1,
+        max_length=5,
+    )
     message_english: str = Field(max_length=500)
     message_hinglish: str = Field(max_length=500)
 

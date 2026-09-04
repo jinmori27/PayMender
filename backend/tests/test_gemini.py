@@ -40,6 +40,19 @@ class MalformedClient(FakeClient):
         return type("Response", (), {"text": "{}"})()
 
 
+class CapturingClient(FakeClient):
+    init_kwargs: dict = {}
+    generate_kwargs: dict = {}
+
+    def __init__(self, *_args, **kwargs):
+        type(self).init_kwargs = kwargs
+        self.models = self
+
+    def generate_content(self, **kwargs):
+        type(self).generate_kwargs = kwargs
+        raise TimeoutError("stop after capture")
+
+
 def configured_settings() -> Settings:
     return Settings(gemini_api_key="test-key", database_url="sqlite://")
 
@@ -77,3 +90,20 @@ def test_gemini_receives_only_allowlisted_non_identifying_case_fields():
     assert "customer_name" not in safe_case
     assert "active_recovery_link_url" not in safe_case
     assert "unexpected_private_field" not in safe_case
+
+
+def test_gemini_client_bounds_timeout_retries_and_output_tokens(monkeypatch):
+    scores = recovery_model.score_actions(CASE)
+    monkeypatch.setattr(genai, "Client", CapturingClient)
+    settings = configured_settings().model_copy(update={
+        "gemini_timeout_seconds": 15,
+        "gemini_max_output_tokens": 512,
+    })
+
+    GeminiAdvisor(settings).propose(CASE, scores)
+
+    http_options = CapturingClient.init_kwargs["http_options"]
+    assert http_options.timeout == 15_000
+    assert http_options.retry_options.attempts == 1
+    config = CapturingClient.generate_kwargs["config"]
+    assert config.max_output_tokens == 512

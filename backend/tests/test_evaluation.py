@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import inspect
+
 from app.config import get_settings
 from app.evaluation import run_evaluation
 from app.ml import RecoveryModel
+
+
+def test_recovery_model_never_deserializes_a_runtime_artifact():
+    assert "joblib" not in inspect.getsource(RecoveryModel.ensure_loaded)
 
 
 def test_evaluation_is_reproducible_and_honest():
