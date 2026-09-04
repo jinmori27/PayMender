@@ -1,4 +1,4 @@
-import type { AuditEvent, CaseDetail, CaseSummary, EvaluationSummary, Metrics, PublicStatus } from "./types";
+import type { AuditEvent, CaseDetail, CaseSummary, EvaluationSummary, FailureScenarioResult, Metrics, PublicStatus } from "./types";
 
 let operatorToken = "";
 
@@ -42,5 +42,5 @@ export const api = {
       body: JSON.stringify({ decision, note: decision === "approve" ? "Approved in operator command center." : "Rejected in operator command center." }),
     }),
   reset: () => request<{ reset: boolean }>("/api/demo/reset", { method: "POST" }),
-  inject: (scenario: string) => request<{ scenario: string; contained: boolean }>(`/api/demo/failures/${scenario}`, { method: "POST" }),
+  inject: (scenario: string) => request<FailureScenarioResult>(`/api/demo/failures/${scenario}`, { method: "POST" }),
 };

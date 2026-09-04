@@ -248,6 +248,13 @@ td { text-align: right; color: #b2bdb7; padding: 12px 10px; border-bottom: 1px s
 td b { color: #d5ded9; }
 
 .failure-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.lab-result { margin-top: 14px; padding: 18px; }
+.lab-assertions { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.lab-assertions > div { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 9px 11px; border: 1px solid #303a35; border-radius: 8px; color: #b9c5be; }
+.lab-assertions svg { color: var(--green); flex: 0 0 auto; }
+.lab-assertions span { min-width: 0; overflow-wrap: anywhere; }
+.lab-assertions b { margin-inline-start: auto; color: var(--green); font-size: 11px; text-transform: uppercase; letter-spacing: .35px; }
+.lab-evidence { margin: 12px 0 0; color: #89968f; overflow-wrap: anywhere; font-size: 12px; }
 .failure-card { min-height: 132px; display: grid; grid-template-columns: 42px 1fr; gap: 14px; text-align: left; color: inherit; border: 1px solid var(--border); background: var(--surface); border-radius: 12px; padding: 17px; cursor: pointer; }
 .failure-card:hover { border-color: #3d5347; background: #141c18; transform: translateY(-1px); }
 .failure-icon { width: 42px; height: 42px; display: grid; place-items: center; color: var(--gold); background: rgba(89, 191, 131, .09); border-radius: 9px; }

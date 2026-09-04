@@ -73,10 +73,6 @@ export interface Metrics {
 export interface PublicStatus {
   status: string;
   display_name: string;
-  demo_mode: boolean;
-  gemini: string;
-  razorpay: string;
-  operator_auth: string;
 }
 
 export interface AuditEvent {
@@ -97,10 +93,22 @@ export interface EvaluationPolicy {
   net_recovered_mean: number;
   net_recovered_std: number;
   recovery_rate_mean: number;
+  recovery_rate_std: number;
   contacts_per_recovery_mean: number;
+  contacts_per_recovery_std: number;
   escalation_rate_mean: number;
+  escalation_rate_std: number;
   stopped_mean: number;
+  stopped_std: number;
   unsafe_blocked_mean: number;
+  unsafe_blocked_std: number;
+}
+
+export interface FailureScenarioResult {
+  scenario: string;
+  status: "contained";
+  assertions: Record<string, boolean>;
+  evidence_ids: string[];
 }
 
 export interface EvaluationSummary {

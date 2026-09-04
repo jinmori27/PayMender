@@ -27,6 +27,7 @@ import type {
   CaseDetail,
   CaseSummary,
   EvaluationSummary,
+  FailureScenarioResult,
   Metrics,
   Proposal,
   RecoveryAction,
@@ -226,7 +227,7 @@ function EvaluationView({ data, displayName, running, onRun }: { data: Evaluatio
           </section>
           <section className="metric-table card-surface">
             <div className="section-title"><span>Full metric disclosure</span><small>no cherry-picked case</small></div>
-            <div className="table-scroll"><table><thead><tr><th>Policy</th><th>Gross ₹</th><th>Net ₹</th><th>Recovery</th><th>Contacts / recovery</th><th>Escalation</th><th>Stopped</th></tr></thead><tbody>{data.policies.map((policy) => <tr key={policy.policy}><td><b>{policy.policy}</b></td><td>{moneyRupees(policy.gross_recovered_mean)}</td><td>{moneyRupees(policy.net_recovered_mean)}</td><td>{(policy.recovery_rate_mean * 100).toFixed(1)}%</td><td>{policy.contacts_per_recovery_mean.toFixed(2)}</td><td>{(policy.escalation_rate_mean * 100).toFixed(1)}%</td><td>{policy.stopped_mean.toFixed(1)}</td></tr>)}</tbody></table></div>
+            <div className="table-scroll"><table><thead><tr><th>Policy</th><th>Gross ₹</th><th>Net ₹</th><th>Recovery</th><th>Contacts / recovery</th><th>Escalation</th><th>Stopped</th><th>Unsafe blocked</th></tr></thead><tbody>{data.policies.map((policy) => <tr key={policy.policy}><td><b>{policy.policy}</b></td><td>{moneyRupees(policy.gross_recovered_mean)} ± {moneyRupees(policy.gross_recovered_std)}</td><td>{moneyRupees(policy.net_recovered_mean)} ± {moneyRupees(policy.net_recovered_std)}</td><td>{(policy.recovery_rate_mean * 100).toFixed(1)}% ± {(policy.recovery_rate_std * 100).toFixed(1)}%</td><td>{policy.contacts_per_recovery_mean.toFixed(2)} ± {policy.contacts_per_recovery_std.toFixed(2)}</td><td>{(policy.escalation_rate_mean * 100).toFixed(1)}% ± {(policy.escalation_rate_std * 100).toFixed(1)}%</td><td>{policy.stopped_mean.toFixed(1)} ± {policy.stopped_std.toFixed(1)}</td><td>{policy.unsafe_blocked_mean.toFixed(1)} ± {policy.unsafe_blocked_std.toFixed(1)}</td></tr>)}</tbody></table></div>
           </section>
         </>
       )}
@@ -234,17 +235,18 @@ function EvaluationView({ data, displayName, running, onRun }: { data: Evaluatio
   );
 }
 
-function FailureLab({ audit, onInject }: { audit: AuditEvent[]; onInject: (scenario: string) => void }) {
+function FailureLab({ audit, result, running, onInject }: { audit: AuditEvent[]; result: FailureScenarioResult | null; running: boolean; onInject: (scenario: string) => void }) {
   const scenarios = [
     { id: "duplicate", icon: History, title: "Concurrent duplicate", text: "Replay ten identical webhook deliveries and prove exactly-once intake." },
     { id: "gemini-quota", icon: Sparkles, title: "Gemini quota exhausted", text: "Show deterministic explanation fallback without relaxing policy gates." },
     { id: "razorpay-500", icon: AlertTriangle, title: "Razorpay returns 5xx", text: "Mark the external action retryable without recording a false success." },
-    { id: "worker-crash", icon: RefreshCw, title: "Worker crashes mid-job", text: "Reclaim the expired lease and preserve the raw event for safe replay." },
+    { id: "worker-crash", icon: RefreshCw, title: "Worker crashes mid-job", text: "Reclaim an expired lease around the stored, PII-minimized event envelope." },
   ];
   return (
     <main className="view-page">
       <div className="page-intro"><div><h1>Reliability lab</h1><p>Verify how the system contains dependency failures and duplicate delivery.</p></div></div>
-      <div className="failure-grid">{scenarios.map(({ id, icon: Icon, title, text }) => <button className="failure-card" key={id} onClick={() => onInject(id)}><div className="failure-icon"><Icon /></div><div><h3>{title}</h3><p>{text}</p><span>Inject scenario <ArrowRight size={15} /></span></div></button>)}</div>
+      <div className="failure-grid">{scenarios.map(({ id, icon: Icon, title, text }) => <button className="failure-card" key={id} disabled={running} onClick={() => onInject(id)}><div className="failure-icon"><Icon /></div><div><h3>{title}</h3><p>{text}</p><span>{running ? "Running contained check" : "Run contained check"} <ArrowRight size={15} /></span></div></button>)}</div>
+      {result && <section className="lab-result card-surface" aria-live="polite"><div className="section-title"><span>{cleanLabel(result.scenario)} contained</span><small>{result.evidence_ids.length} evidence IDs</small></div><div className="lab-assertions">{Object.entries(result.assertions).map(([name, passed]) => <div key={name}><Check size={15} /><span>{cleanLabel(name)}</span><b>{passed ? "Passed" : "Failed"}</b></div>)}</div><p className="lab-evidence"><b>Evidence:</b> {result.evidence_ids.join(" · ")}</p></section>}
       <section className="card-surface lab-audit"><div className="section-title"><span>Containment evidence</span><small>latest audit events</small></div><AuditTimeline audit={audit.filter((event) => event.category === "failure" || event.category === "safety").slice(0, 12)} /></section>
     </main>
   );
@@ -269,6 +271,7 @@ export default function App() {
   const [evaluation, setEvaluation] = useState<EvaluationSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [failureResult, setFailureResult] = useState<FailureScenarioResult | null>(null);
 
   const load = useCallback(async (preferredId?: string | null) => {
     const [nextCases, nextMetrics, nextAudit, nextEval] = await Promise.all([api.cases(), api.metrics(), api.audit(), api.evaluation()]);
@@ -321,7 +324,7 @@ export default function App() {
   };
   const runEval = async () => { setBusy(true); try { setEvaluation(await api.runEvaluation()); setNotice("Held-out evaluation completed."); } catch (error) { setNotice(error instanceof Error ? error.message : "Evaluation failed."); } finally { setBusy(false); } };
   const reset = async () => { setBusy(true); try { await api.reset(); setSelectedId(null); await load(null); setNotice("Demo data restored."); } finally { setBusy(false); } };
-  const inject = async (scenario: string) => { await api.inject(scenario); await load(selectedId); setNotice("Failure injected and contained. See the audit evidence below."); };
+  const inject = async (scenario: string) => { setBusy(true); try { const result = await api.inject(scenario); setFailureResult(result); await load(selectedId); setNotice("Contained scenario passed every assertion. Evidence IDs are shown in the Reliability Lab."); } catch (error) { setNotice(error instanceof Error ? error.message : "Contained scenario failed."); } finally { setBusy(false); } };
   const copyLink = async (url: string) => {
     try {
       await navigator.clipboard.writeText(url);
@@ -378,10 +381,10 @@ export default function App() {
             <section className="case-queue"><div className="queue-head"><div><h2>Recovery queue</h2><span>{metrics ? `${cases.length} ${metrics.demo_mode ? "synthetic" : "Razorpay test"} cases` : "Loading cases"}</span></div><div className="queue-count">{metrics?.pending_approvals ?? 0} gated</div></div><div className="case-list">{cases.map((item) => <CaseCard key={item.id} item={item} selected={selectedId === item.id} proposal={latestProposalByCase.get(item.id)} onClick={() => selectCase(item.id)} />)}{metrics && cases.length === 0 && <div className="queue-empty"><Clock3 /><b>Waiting for a failed subscription</b><span>Signed Razorpay test webhooks will appear here after verification.</span></div>}</div></section>
             <Inspector detail={detail} busy={busy} displayName={metrics?.display_name ?? displayName} onDecision={decide} onCopyLink={copyLink} />
           </div>
-          <section className="command-audit card-surface"><div className="section-title"><span>Immutable audit trail</span><small>{audit.length} recent events</small></div><AuditTimeline audit={audit.slice(0, 8)} /></section>
+          <section className="command-audit card-surface"><div className="section-title"><span>Append-only audit history</span><small>{audit.length} recent events</small></div><AuditTimeline audit={audit.slice(0, 8)} /></section>
         </main>}
         {view === "evaluation" && <EvaluationView data={evaluation} displayName={metrics?.display_name ?? displayName} running={busy} onRun={runEval} />}
-        {view === "failures" && metrics?.demo_mode && <FailureLab audit={audit} onInject={inject} />}
+        {view === "failures" && metrics?.demo_mode && <FailureLab audit={audit} result={failureResult} running={busy} onInject={inject} />}
       </div>
       {notice && <button className="toast" onClick={() => setNotice(null)} aria-live="polite"><Check size={17} /><span>{notice}</span><X size={15} /></button>}
     </div>
