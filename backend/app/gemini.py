@@ -56,8 +56,9 @@ def fallback_decision(case: dict, scores: list[ActionScore], reason: str = "offl
 
 
 class GeminiAdvisor:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, client_factory=None) -> None:  # type: ignore[no-untyped-def]
         self.settings = settings
+        self.client_factory = client_factory
 
     def propose(self, case: dict, scores: list[ActionScore]) -> tuple[GeminiDecision, str]:
         if not self.settings.gemini_enabled:
@@ -78,7 +79,8 @@ class GeminiAdvisor:
             from google import genai
             from google.genai import types
 
-            client = genai.Client(
+            client_factory = self.client_factory or genai.Client
+            client = client_factory(
                 api_key=self.settings.gemini_api_key,
                 http_options=types.HttpOptions(
                     timeout=self.settings.gemini_timeout_seconds * 1_000,

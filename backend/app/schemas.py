@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -138,6 +138,13 @@ class WebhookReceipt(BaseModel):
     accepted: bool
     duplicate: bool = False
     event_id: str
+
+
+class FailureScenarioResult(BaseModel):
+    scenario: str
+    status: Literal["contained"]
+    assertions: dict[str, bool]
+    evidence_ids: list[str] = Field(min_length=1)
 
 
 class EvaluationPolicyMetrics(BaseModel):

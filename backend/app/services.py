@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 from datetime import datetime, timedelta, timezone
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import and_, delete, func, or_, select
@@ -741,7 +742,14 @@ def create_proposal(db: Session, case: SubscriptionCaseModel, settings: Settings
     return proposal
 
 
-def approve_proposal(db: Session, case_id: str, decision: str, note: str, settings: Settings) -> RecoveryProposalModel:
+def approve_proposal(
+    db: Session,
+    case_id: str,
+    decision: str,
+    note: str,
+    settings: Settings,
+    gateway_factory: Callable[[Settings], RazorpayGateway] = RazorpayGateway,
+) -> RecoveryProposalModel:
     case = db.get(SubscriptionCaseModel, case_id)
     expected_source = "synthetic" if settings.demo_mode else "razorpay_test"
     if not case or case.source != expected_source:
@@ -800,7 +808,7 @@ def approve_proposal(db: Session, case_id: str, decision: str, note: str, settin
         execution.adapter = "razorpay-test" if settings.external_razorpay_enabled else "demo"
         db.flush()
         try:
-            result = RazorpayGateway(settings).create_recovery_link(case_as_dict(case))
+            result = gateway_factory(settings).create_recovery_link(case_as_dict(case))
             execution.status = "completed"
             execution.external_id = result.id
             execution.external_url = result.url

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from .config import get_settings
 from .database import SessionLocal, get_db, init_db
+from .failure_lab import execute_failure_scenario
 from .rate_limit import FixedWindowRateLimiter
 from .schemas import (
     ApprovalRequest,
@@ -19,13 +20,13 @@ from .schemas import (
     CaseDetail,
     CaseSummary,
     EvaluationSummary,
+    FailureScenarioResult,
     MetricsView,
     WebhookReceipt,
 )
 from .services import (
     accept_webhook,
     approve_proposal,
-    audit,
     get_case,
     latest_evaluation,
     initialize_demo_data,
@@ -241,22 +242,18 @@ def demo_reset(db: Session = Depends(get_db)) -> dict:
     return {"reset": True}
 
 
-@app.post("/api/demo/failures/{scenario}", dependencies=[Depends(require_operator)])
-def inject_failure(scenario: str, db: Session = Depends(get_db)) -> dict:
+@app.post(
+    "/api/demo/failures/{scenario}",
+    response_model=FailureScenarioResult,
+    dependencies=[Depends(require_operator)],
+)
+def inject_failure(scenario: str, db: Session = Depends(get_db)) -> FailureScenarioResult:
     if not settings.demo_mode:
         raise HTTPException(status_code=404, detail="Demo mode is disabled")
-    scenarios = {
-        "duplicate": ("Duplicate webhook suppressed", "Ten concurrent deliveries resolved to one idempotent event.", "warning"),
-        "gemini-quota": ("Gemini quota fallback", "The structured advisor fell back to deterministic templates; execution stayed gated.", "warning"),
-        "razorpay-500": ("Razorpay 5xx contained", "The approved action was marked retryable and no duplicate external reference was stored.", "error"),
-        "worker-crash": ("Expired worker lease reclaimed", "A pending job was safely reclaimed after its lease expired.", "warning"),
-    }
-    if scenario not in scenarios:
+    try:
+        return execute_failure_scenario(db, scenario, settings)
+    except LookupError as exc:
         raise HTTPException(status_code=404, detail="Unknown failure scenario")
-    title, detail, severity = scenarios[scenario]
-    audit(db, "safety" if scenario == "duplicate" else "failure", title, detail, severity=severity, metadata={"injected": True})
-    db.commit()
-    return {"scenario": scenario, "contained": True}
 
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
