@@ -1,10 +1,20 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 
 from app.config import get_settings
-from app.models import SubscriptionCaseModel
-from app.services import approve_proposal, audit, get_case, initialize_demo_data, list_audit, list_cases, metrics
+from app.models import RecoveryProposalModel, SubscriptionCaseModel
+from app.services import (
+    approve_proposal,
+    audit,
+    create_proposal,
+    get_case,
+    initialize_demo_data,
+    list_audit,
+    list_cases,
+    metrics,
+)
 
 
 def test_demo_initialization_is_disabled_in_razorpay_test_mode(monkeypatch):
@@ -71,3 +81,24 @@ def test_case_queries_and_approvals_never_cross_modes(db):
 
     with pytest.raises(LookupError, match="Case not found"):
         approve_proposal(db, "case_demo_1", "approve", "", real_settings)
+
+
+def test_repeated_proposals_supersede_the_previous_action_and_do_not_inflate_metrics(db):
+    settings = get_settings()
+    case = db.get(SubscriptionCaseModel, "case_demo_1")
+    original = db.scalar(
+        select(RecoveryProposalModel)
+        .where(RecoveryProposalModel.case_id == case.id)
+        .order_by(RecoveryProposalModel.created_at.desc())
+    )
+    before = metrics(db, settings)
+
+    replacement = create_proposal(db, case, settings)
+    db.commit()
+    db.refresh(original)
+
+    after = metrics(db, settings)
+    assert original.state == "superseded"
+    assert replacement.state == "proposed"
+    assert after.pending_approvals == before.pending_approvals
+    assert after.predicted_recoverable_paise == before.predicted_recoverable_paise

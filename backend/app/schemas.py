@@ -147,10 +147,15 @@ class EvaluationPolicyMetrics(BaseModel):
     net_recovered_mean: float
     net_recovered_std: float
     recovery_rate_mean: float
+    recovery_rate_std: float = 0.0
     contacts_per_recovery_mean: float
+    contacts_per_recovery_std: float = 0.0
     escalation_rate_mean: float
+    escalation_rate_std: float = 0.0
     stopped_mean: float
+    stopped_std: float = 0.0
     unsafe_blocked_mean: float
+    unsafe_blocked_std: float = 0.0
 
 
 class EvaluationSummary(BaseModel):

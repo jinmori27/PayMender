@@ -100,10 +100,15 @@ def run_evaluation(model: RecoveryModel, settings: Settings) -> EvaluationSummar
             net_recovered_mean=round(mean(row["net"] for row in rows), 2),
             net_recovered_std=round(pstdev(row["net"] for row in rows), 2),
             recovery_rate_mean=round(mean(row["rate"] for row in rows), 4),
+            recovery_rate_std=round(pstdev(row["rate"] for row in rows), 4),
             contacts_per_recovery_mean=round(mean(row["contacts_per_recovery"] for row in rows), 3),
+            contacts_per_recovery_std=round(pstdev(row["contacts_per_recovery"] for row in rows), 3),
             escalation_rate_mean=round(mean(row["escalation_rate"] for row in rows), 4),
+            escalation_rate_std=round(pstdev(row["escalation_rate"] for row in rows), 4),
             stopped_mean=round(mean(row["stopped"] for row in rows), 2),
+            stopped_std=round(pstdev(row["stopped"] for row in rows), 2),
             unsafe_blocked_mean=round(mean(row["blocked"] for row in rows), 2),
+            unsafe_blocked_std=round(pstdev(row["blocked"] for row in rows), 2),
         ))
 
     return EvaluationSummary(

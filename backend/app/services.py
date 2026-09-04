@@ -702,6 +702,14 @@ def create_proposal(db: Session, case: SubscriptionCaseModel, settings: Settings
     gemini_decision, provider = advisor.propose(case_data, scores)
     policy = decide_policy(case_data, gemini_decision.recommended_action, gemini_decision.confidence, settings)
     chosen_score = next((item for item in scores if item.action == policy.action), scores[0])
+    active_proposals = db.scalars(
+        select(RecoveryProposalModel).where(
+            RecoveryProposalModel.case_id == case.id,
+            RecoveryProposalModel.state.in_(["proposed", "retryable_failure"]),
+        )
+    ).all()
+    for active in active_proposals:
+        active.state = "superseded"
     proposal = RecoveryProposalModel(
         id=new_id("prop"),
         case_id=case.id,
@@ -896,10 +904,19 @@ def metrics(db: Session, settings: Settings) -> MetricsView:
         select(SubscriptionCaseModel).where(SubscriptionCaseModel.source == source)
     ).all()
     case_ids = {item.id for item in cases}
-    latest_proposals = [
-        item for item in db.scalars(select(RecoveryProposalModel)).all()
-        if item.case_id in case_ids
-    ]
+    proposal_rows = db.scalars(
+        select(RecoveryProposalModel)
+        .where(RecoveryProposalModel.case_id.in_(case_ids))
+        .order_by(
+            RecoveryProposalModel.case_id,
+            RecoveryProposalModel.created_at.desc(),
+            RecoveryProposalModel.id.desc(),
+        )
+    ).all() if case_ids else []
+    latest_by_case: dict[str, RecoveryProposalModel] = {}
+    for proposal in proposal_rows:
+        latest_by_case.setdefault(proposal.case_id, proposal)
+    latest_proposals = list(latest_by_case.values())
     predicted = sum(max(item.expected_value_rupees, 0) * 100 for item in latest_proposals if item.state in {"proposed", "approved"})
     blocked = db.scalar(
         select(func.count())

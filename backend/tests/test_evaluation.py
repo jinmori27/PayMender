@@ -21,3 +21,9 @@ def test_evaluation_is_reproducible_and_honest():
     assert first.cases_per_batch == 200
     assert [item.model_dump() for item in first.policies] == [item.model_dump() for item in second.policies]
     assert {item.policy for item in first.policies} == {"PayMender", "Always wait", "Always recovery link", "Fixed rules"}
+    for policy in first.policies:
+        assert policy.recovery_rate_std >= 0
+        assert policy.contacts_per_recovery_std >= 0
+        assert policy.escalation_rate_std >= 0
+        assert policy.stopped_std >= 0
+        assert policy.unsafe_blocked_std >= 0
