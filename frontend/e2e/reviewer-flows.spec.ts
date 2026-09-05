@@ -134,6 +134,12 @@ test("reset requires confirmation before clearing current approvals", async ({ p
   await page.getByRole("button", { name: "Approve action" }).click();
   await expect(page.getByText("Recovery link ready")).toBeVisible();
   await page.getByRole("button", { name: "Reset demo data" }).click();
+  await expect(page.getByRole("dialog", { name: "Start a new demo run?" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Keep current run" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Reset demo data" })).toBeFocused();
+  await page.getByRole("button", { name: "Reset demo data" }).click();
   await page.getByRole("button", { name: "Keep current run" }).click();
   await expect(page.getByText("Recovery link ready")).toBeVisible();
   await page.getByRole("button", { name: "Reset demo data" }).click();

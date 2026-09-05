@@ -11,6 +11,7 @@ const systemChrome = "C:/Program Files/Google/Chrome/Application/chrome.exe";
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
+  workers: 1,
   timeout: 120_000,
   reporter: "line",
   use: {
@@ -27,6 +28,7 @@ export default defineConfig({
       DEMO_MODE: "true",
       DATABASE_URL: "sqlite:///./paymender-e2e.sqlite3",
       OPERATOR_API_TOKEN: "test_operator_token_32_bytes_long",
+      OPERATOR_SESSION_RATE_LIMIT_PER_15_MINUTES: "100",
       RAZORPAY_WEBHOOK_SECRET: "test_webhook_secret",
       RAZORPAY_KEY_ID: "",
       RAZORPAY_KEY_SECRET: "",

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ArrowRight, Check, ChevronRight, CircleDollarSign, FileCheck2, ShieldCheck, Sparkles, UserCheck } from "lucide-react";
 import type { CaseDetail } from "./types";
-import "./workflow.css";
+
 
 const stages = [
   {
@@ -41,7 +41,7 @@ export function RecoveryGuide({ demoMode, onReview }: { demoMode: boolean; onRev
   const stage = stages[selected];
   const Icon = stage.icon;
   return (
-    <main className="view-page workflow-page">
+    <main id="main-content" tabIndex={-1} className="view-page workflow-page">
       <div className="page-intro"><div><h1>How recovery works</h1><p>From a failed subscription to a verified outcome, with a human decision where it matters.</p></div><button className="btn primary" onClick={onReview}>Review a case <ArrowRight size={16} /></button></div>
       <div className="workflow-layout">
         <nav className="workflow-stages" aria-label="Recovery workflow stages">

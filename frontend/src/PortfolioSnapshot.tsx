@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import type { CaseSummary } from "./types";
+import { cleanLabel } from "./format";
 
 // Provider statuses are not proposal states: a halted subscription can still
 // have a pending approval, and a charged subscription is not necessarily recovered.
@@ -32,7 +33,7 @@ export function PortfolioSnapshot({ cases, loaded }: { cases: CaseSummary[]; loa
         </div>
         <dl className="snapshot-legend">
           {groups.map(([status, count]) => <div key={status} data-status={status} style={segmentStyle(status)}>
-            <dt><span aria-hidden="true" />{status.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase())}</dt>
+            <dt><span aria-hidden="true" />{cleanLabel(status)}</dt>
             <dd>{count}</dd>
           </div>)}
         </dl>

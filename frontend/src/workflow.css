@@ -1,4 +1,4 @@
-.workspace-guide { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-block: 0 18px; }
+.workspace-guide { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-block: 0 12px; }
 .workspace-guide > div { display: flex; align-items: center; gap: 12px; }
 .workspace-guide svg { flex: 0 0 auto; color: var(--primary); }
 .workspace-guide p { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0; }
@@ -10,13 +10,13 @@
 .progress-marker { flex: 0 0 20px; height: 20px; display: grid; place-items: center; border: 1px solid var(--border-bright); border-radius: 50%; color: var(--primary); }
 .progress-marker > span { width: 4px; height: 4px; background: var(--muted); border-radius: 50%; }
 .complete .progress-marker { border-color: #b8dccb; background: #f0faf5; color: var(--success); }
-.case-progress li > div > span { display: block; color: var(--muted); font-size: 11px; }
+.case-progress li > div > span { display: block; color: var(--muted); font-size: 12px; }
 .case-progress b { display: block; margin-top: 5px; font-weight: 550; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .inspector-switcher { display: flex; gap: 8px; padding-inline: 20px; border-bottom: 1px solid var(--border); }
 .inspector-switcher button { min-height: 46px; padding: 10px 8px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; }
 .inspector-switcher button:hover { color: var(--text); }
 .inspector-switcher button[aria-pressed="true"] { color: var(--primary); border-bottom-color: var(--primary); }
-.inspector-content { min-height: 240px; }
+.inspector-content { min-height: 0; }
 .decision-context { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 22px 0; }
 .decision-context dt { color: var(--muted); font-size: 12px; }
 .decision-context dd { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; margin: 8px 0 0; }
@@ -31,7 +31,7 @@
 .workflow-stages svg { flex-shrink: 0; }
 .workflow-stages button:hover { background: var(--surface); color: var(--text); }
 .workflow-stages button[aria-pressed="true"] { background: var(--primary-tint); border-color: #dcd8f7; color: var(--primary); }
-.workflow-detail { padding: 30px; background: var(--surface); border: 1px solid var(--border-bright); border-radius: 12px; min-height: 520px; }
+.workflow-detail { padding: 30px; background: var(--surface); border: 1px solid var(--border-bright); border-radius: 12px; min-height: 440px; }
 .workflow-symbol { color: var(--primary); }
 .workflow-detail h2 { font-size: 27px; font-weight: 600; line-height: 1.25; margin: 20px 0 14px; }
 .workflow-detail p, .mode-explainer p { color: var(--muted); font-size: 15px; line-height: 1.75; margin: 0; max-width: 70ch; }
@@ -47,8 +47,9 @@
   .workflow-layout { gap: 18px; }
 }
 
-@media (max-width: 760px) {
-  .workspace-guide { flex-direction: column; gap: 6px; }
+@media (max-width: 1000px) {
+  .workspace-guide { flex-direction: column; gap: 4px; }
+  .workspace-guide > div { display: none; }
   .workspace-guide p, .inspector-note { font-size: 14px; }
   .workflow-layout, .mode-explainer { grid-template-columns: 1fr; gap: 20px; }
   .workflow-stages { gap: 2px; }
@@ -63,5 +64,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+  .spin { animation: none; }
+  button { transition: none; }
+  button:active:not(:disabled) { transform: none; }
+  html { scroll-behavior: auto; }
 }
