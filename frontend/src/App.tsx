@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CircleDollarSign,
   Copy,
+  Download,
   Clock3,
   ExternalLink,
   FlaskConical,
@@ -15,6 +16,7 @@ import {
   KeyRound,
   LogOut,
   RefreshCw,
+  Search,
   ShieldCheck,
   Sparkles,
   UserCheck,
@@ -68,11 +70,11 @@ function KpiCard({ label, value, note, icon: Icon, accent = false }: {
   );
 }
 
-function CaseCard({ item, selected, onClick, proposal }: {
-  item: CaseSummary; selected: boolean; onClick: () => void; proposal?: Proposal;
+function CaseCard({ item, selected, onClick, proposal, disabled }: {
+  item: CaseSummary; selected: boolean; onClick: () => void; proposal?: Proposal; disabled: boolean;
 }) {
   return (
-    <button className={`case-card ${selected ? "selected" : ""}`} onClick={onClick}>
+    <button className={`case-card ${selected ? "selected" : ""}`} onClick={onClick} aria-pressed={selected} disabled={disabled}>
       <div className="case-card-head">
         <div className="avatar">{item.customer_name.split(" ").map((part) => part[0]).join("").slice(0, 2)}</div>
         <div className="case-identity"><strong>{item.customer_name}</strong><span>{item.subscription_id}</span></div>
@@ -110,13 +112,18 @@ function ScoreBars({ proposal }: { proposal: Proposal }) {
   );
 }
 
-function Inspector({ detail, busy, displayName, onDecision, onCopyLink }: {
+function Inspector({ detail, busy, loading, error, onRetry, displayName, onDecision, onCopyLink }: {
   detail: CaseDetail | null;
   busy: boolean;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
   displayName: string;
   onDecision: (decision: "approve" | "reject") => void;
   onCopyLink: (url: string) => void;
 }) {
+  if (loading) return <section className="inspector empty-state" role="status"><RefreshCw className="spin" /><h2>Loading case details</h2><p>Checking the latest proposal before enabling decisions.</p></section>;
+  if (error) return <section className="inspector empty-state" role="alert"><AlertTriangle /><h2>Case could not be loaded</h2><p>{error}</p><button className="btn ghost" onClick={onRetry}>Retry case</button></section>;
   if (!detail) return <section className="inspector empty-state"><Sparkles /><h2>Select a recovery case</h2><p>Inspect the evidence, model scores, policy override and complete audit context.</p></section>;
   const proposal = detail.proposals[0];
   return (
@@ -203,23 +210,32 @@ function Inspector({ detail, busy, displayName, onDecision, onCopyLink }: {
 function EvaluationView({ data, displayName, running, onRun }: { data: EvaluationSummary | null; displayName: string; running: boolean; onRun: () => void }) {
   const best = data?.policies.find((policy) => policy.policy === "PayMender");
   const max = Math.max(...(data?.policies.map((policy) => policy.net_recovered_mean) ?? [1]));
+  const exportEvaluation = () => {
+    if (!data) return;
+    const url = URL.createObjectURL(new Blob([JSON.stringify({ evidence_source: "synthetic", evaluation: data }, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "paymender-synthetic-evaluation.json";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   return (
     <main className="view-page">
-      <div className="page-intro"><div><h1>Held-out recovery evaluation</h1><p>Compare ten fixed synthetic batches against three non-learning baselines.</p></div><button className="btn primary" onClick={onRun} disabled={running}>{running ? <RefreshCw className="spin" /> : <BarChart3 />}Run evaluation</button></div>
+      <div className="page-intro"><div><h1>Held-out recovery evaluation</h1><p>Compare ten fixed synthetic batches against three non-learning baselines.</p></div><div className="evaluation-actions">{data && <button className="btn ghost" onClick={exportEvaluation}><Download />Export evaluation</button>}<button className="btn primary" onClick={onRun} disabled={running}>{running ? <RefreshCw className="spin" /> : <BarChart3 />}Run evaluation</button></div></div>
       {!data ? <div className="large-empty"><BarChart3 /><h2>No evaluation run yet</h2><p>Run the deterministic harness to generate transparent, reproducible evidence.</p></div> : (
         <>
           <div className="disclaimer"><FlaskConical /><div><b>Synthetic by design</b><span>{data.synthetic_disclaimer}</span></div><code>{data.train_records.toLocaleString()} train · {data.batches} × {data.cases_per_batch} test</code></div>
           <div className="eval-kpis">
-            <KpiCard label="Mean net recovery" value={moneyRupees(best?.net_recovered_mean ?? 0)} note="per 200-case held-out batch" icon={CircleDollarSign} accent />
-            <KpiCard label="Recovery rate" value={`${((best?.recovery_rate_mean ?? 0) * 100).toFixed(1)}%`} note="simulated successful interventions" icon={Activity} />
-            <KpiCard label="Contacts / recovery" value={(best?.contacts_per_recovery_mean ?? 0).toFixed(2)} note="lower avoids customer fatigue" icon={UserCheck} />
-            <KpiCard label="Unsafe actions blocked" value={(best?.unsafe_blocked_mean ?? 0).toFixed(1)} note="mean policy overrides per batch" icon={ShieldCheck} />
+            <KpiCard label="Mean net recovery" value={`${moneyRupees(best?.net_recovered_mean ?? 0)} ± ${moneyRupees(best?.net_recovered_std ?? 0)}`} note={`per ${data.cases_per_batch}-case held-out batch`} icon={CircleDollarSign} accent />
+            <KpiCard label="Recovery rate" value={`${((best?.recovery_rate_mean ?? 0) * 100).toFixed(1)}% ± ${((best?.recovery_rate_std ?? 0) * 100).toFixed(1)}%`} note="simulated successful interventions" icon={Activity} />
+            <KpiCard label="Contacts / recovery" value={`${(best?.contacts_per_recovery_mean ?? 0).toFixed(2)} ± ${(best?.contacts_per_recovery_std ?? 0).toFixed(2)}`} note="lower avoids customer fatigue" icon={UserCheck} />
+            <KpiCard label="Unsafe actions blocked" value={`${(best?.unsafe_blocked_mean ?? 0).toFixed(1)} ± ${(best?.unsafe_blocked_std ?? 0).toFixed(1)}`} note="policy overrides per batch" icon={ShieldCheck} />
           </div>
           <section className="evaluation-chart card-surface">
             <div className="section-title"><span>Net rupees recovered by policy</span><small>mean ± standard deviation</small></div>
             {data.policies.map((policy) => (
               <div className={`eval-row ${policy.policy === "PayMender" ? "winner" : ""}`} key={policy.policy}>
-                <div className="eval-name"><b>{policy.policy === "PayMender" ? displayName : policy.policy}</b><span>{(policy.recovery_rate_mean * 100).toFixed(1)}% recovered</span></div>
+                <div className="eval-name"><b>{policy.policy === "PayMender" ? displayName : policy.policy}</b><span>{(policy.recovery_rate_mean * 100).toFixed(1)}% ± {(policy.recovery_rate_std * 100).toFixed(1)}% recovered</span></div>
                 <div className="eval-track"><span style={{ width: `${(policy.net_recovered_mean / max) * 100}%` }} /></div>
                 <div className="eval-number"><b>{moneyRupees(policy.net_recovered_mean)}</b><span>± {moneyRupees(policy.net_recovered_std)}</span></div>
               </div>
@@ -253,7 +269,7 @@ function FailureLab({ audit, result, running, onInject }: { audit: AuditEvent[];
 }
 
 function AuditTimeline({ audit }: { audit: AuditEvent[] }) {
-  return <div className="audit-list">{audit.map((event) => <div className={`audit-item ${event.severity}`} key={event.id}><span className="audit-dot" /><div><b>{event.title}</b><p>{event.detail}</p><small>{new Date(event.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })} · {event.category}</small></div></div>)}</div>;
+  return <div className="audit-list">{audit.map((event) => <div className={`audit-item ${event.severity}`} key={event.id}><span className="audit-dot" /><div><b>{event.title}</b><p>{event.detail}</p><small>{new Date(event.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })} · {event.category}</small><details className="audit-reference"><summary>Evidence references</summary><code>Event: {event.id}{event.case_id ? ` · Case: ${event.case_id}` : " · Run-level event"}</code></details></div></div>)}</div>;
 }
 
 export default function App() {
@@ -272,17 +288,64 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [failureResult, setFailureResult] = useState<FailureScenarioResult | null>(null);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("recent");
+  const [auditScope, setAuditScope] = useState("run");
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const selectedCase = useRef<string | null>(null);
+  const detailRequest = useRef(0);
+  const portfolioRequest = useRef(0);
+
+  const selectCase = useCallback(async (id: string) => {
+    const requestId = ++detailRequest.current;
+    selectedCase.current = id;
+    setSelectedId(id);
+    setDetail(null);
+    setDetailError(null);
+    setDetailLoading(true);
+    try {
+      const nextDetail = await api.case(id);
+      if (requestId === detailRequest.current) setDetail(nextDetail);
+    } catch (error) {
+      if (requestId === detailRequest.current) setDetailError(error instanceof Error ? error.message : "Check your connection and retry.");
+    } finally {
+      if (requestId === detailRequest.current) setDetailLoading(false);
+    }
+  }, []);
 
   const load = useCallback(async (preferredId?: string | null) => {
-    const [nextCases, nextMetrics, nextAudit, nextEval] = await Promise.all([api.cases(), api.metrics(), api.audit(), api.evaluation()]);
-    setCases(nextCases); setMetrics(nextMetrics); setAudit(nextAudit); setEvaluation(nextEval);
-    const id = preferredId ?? selectedId ?? nextCases[0]?.id;
-    if (id) { setSelectedId(id); setDetail(await api.case(id)); }
-  }, [selectedId]);
+    const requestId = ++portfolioRequest.current;
+    setRefreshing(true);
+    setLoadError(null);
+    try {
+      const [nextCases, nextMetrics, nextAudit, nextEval] = await Promise.all([api.cases(), api.metrics(), api.audit(), api.evaluation()]);
+      if (requestId !== portfolioRequest.current) return;
+      setCases(nextCases); setMetrics(nextMetrics); setAudit(nextAudit); setEvaluation(nextEval);
+      setLastUpdated(new Date());
+      const candidate = preferredId === undefined ? selectedCase.current : preferredId;
+      const id = nextCases.find((item) => item.id === candidate)?.id ?? nextCases[0]?.id;
+      if (id) await selectCase(id);
+      else {
+        ++detailRequest.current;
+        selectedCase.current = null;
+        setSelectedId(null); setDetail(null); setDetailError(null); setDetailLoading(false);
+      }
+    } catch (error) {
+      if (requestId === portfolioRequest.current) setLoadError(error instanceof Error ? error.message : "Check your connection and refresh.");
+    } finally {
+      if (requestId === portfolioRequest.current) setRefreshing(false);
+    }
+  }, [selectCase]);
 
   useEffect(() => {
-    if (authenticated) load().catch((error: Error) => setNotice(error.message));
-  }, [authenticated]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (authenticated) void load();
+  }, [authenticated, load]);
 
   useEffect(() => {
     api.status().then((status) => {
@@ -307,23 +370,29 @@ export default function App() {
   };
 
   const signOut = () => {
+    ++portfolioRequest.current;
+    ++detailRequest.current;
+    selectedCase.current = null;
     api.signOut();
     setAuthenticated(false);
     setCases([]);
     setDetail(null);
     setSelectedId(null);
+    setMetrics(null); setAudit([]); setEvaluation(null); setFailureResult(null);
+    setNotice(null); setLoadError(null); setDetailError(null); setLastUpdated(null);
+    setRefreshing(false); setDetailLoading(false); setConfirmReset(false);
+    setQuery(""); setStatusFilter("all"); setSortBy("recent"); setAuditScope("run"); setView("command");
   };
 
-  const selectCase = async (id: string) => { setSelectedId(id); setDetail(await api.case(id)); };
   const decide = async (decision: "approve" | "reject") => {
-    if (!selectedId) return;
+    if (!selectedId || detail?.id !== selectedId || detailLoading || busy || refreshing || loadError) return;
     setBusy(true);
     try { setDetail(await api.approve(selectedId, decision)); await load(selectedId); setNotice(decision === "approve" ? "Action approved and safely executed." : "Proposal rejected; no action was taken."); }
     catch (error) { await load(selectedId); setNotice(error instanceof Error ? error.message : "Action failed safely."); }
     finally { setBusy(false); }
   };
   const runEval = async () => { setBusy(true); try { setEvaluation(await api.runEvaluation()); setNotice("Held-out evaluation completed."); } catch (error) { setNotice(error instanceof Error ? error.message : "Evaluation failed."); } finally { setBusy(false); } };
-  const reset = async () => { setBusy(true); try { await api.reset(); setSelectedId(null); await load(null); setNotice("Demo data restored."); } finally { setBusy(false); } };
+  const reset = async () => { setConfirmReset(false); setBusy(true); try { await api.reset(); setQuery(""); setStatusFilter("all"); setFailureResult(null); await load(null); setNotice("Demo data restored. A new evidence run has started."); } catch (error) { setNotice(error instanceof Error ? error.message : "Demo reset failed. Try again."); } finally { setBusy(false); } };
   const inject = async (scenario: string) => { setBusy(true); try { const result = await api.inject(scenario); setFailureResult(result); await load(selectedId); setNotice("Contained scenario passed every assertion. Evidence IDs are shown in the Reliability Lab."); } catch (error) { setNotice(error instanceof Error ? error.message : "Contained scenario failed."); } finally { setBusy(false); } };
   const copyLink = async (url: string) => {
     try {
@@ -335,6 +404,13 @@ export default function App() {
   };
 
   const latestProposalByCase = useMemo(() => new Map(cases.map((item) => [item.id, detail?.id === item.id ? detail.proposals[0] : undefined])), [cases, detail]);
+  const visibleCases = useMemo(() => {
+    const search = query.trim().toLowerCase();
+    return cases.filter((item) => (statusFilter === "all" || item.status === statusFilter)
+      && [item.customer_name, item.subscription_id, item.id, cleanLabel(item.failure_reason)].some((value) => value.toLowerCase().includes(search)))
+      .sort((a, b) => sortBy === "amount" ? b.amount_paise - a.amount_paise : sortBy === "overdue" ? b.days_overdue - a.days_overdue : Date.parse(b.updated_at) - Date.parse(a.updated_at));
+  }, [cases, query, statusFilter, sortBy]);
+  const scopedAudit = auditScope === "case" ? audit.filter((event) => event.case_id === selectedId) : audit;
 
   if (!authenticated) {
     return (
@@ -368,7 +444,9 @@ export default function App() {
         <div className="trust-card"><ShieldCheck /><b>Bounded by design</b><p>AI recommends. Policy constrains. You approve every external action.</p><span><i /> TEST ENVIRONMENT</span></div>
       </aside>
       <div className="main-shell">
-        <header className="topbar"><div><span className="live-dot" />Operations healthy</div><div className="top-actions"><span className="mode-pill">{metrics?.demo_mode ? "Synthetic demo" : "Razorpay test"}</span>{metrics?.demo_mode && <button className="icon-btn" onClick={reset} disabled={busy} title="Reset demo" aria-label="Reset demo data"><RefreshCw size={17} className={busy ? "spin" : ""} /></button>}<button className="icon-btn" onClick={signOut} title="Lock command center" aria-label="Lock command center"><LogOut size={17} /></button></div></header>
+        <header className="topbar"><div role="status">{loadError ? <AlertTriangle size={15} /> : refreshing ? <RefreshCw size={15} className="spin" /> : <span className="live-dot" />}{loadError ? "Refresh needed" : refreshing ? "Updating portfolio" : lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}` : "Connecting"}</div><div className="top-actions"><span className="mode-pill">{metrics ? metrics.demo_mode ? "Synthetic demo" : "Razorpay test" : "Loading mode"}</span><button className="icon-btn" onClick={() => void load()} disabled={busy || refreshing} title="Refresh portfolio" aria-label="Refresh portfolio"><RefreshCw size={17} /></button>{metrics?.demo_mode && <button className="icon-btn" onClick={() => setConfirmReset(true)} disabled={busy || refreshing} title="Reset demo" aria-label="Reset demo data"><History size={17} /></button>}<button className="icon-btn" onClick={signOut} disabled={busy} title="Lock command center" aria-label="Lock command center"><LogOut size={17} /></button></div></header>
+        {loadError && <div className="portfolio-alert" role="alert"><AlertTriangle size={18} /><div><b>Portfolio could not be refreshed</b><p>{loadError} Displayed data may be out of date. Refresh before approving.</p></div><button className="btn ghost" onClick={() => void load()} disabled={refreshing}>Try refresh again</button></div>}
+        {confirmReset && <div className="portfolio-alert" role="alert"><History size={18} /><div><b>Start a new demo run?</b><p>This removes the current synthetic cases, approvals and audit history.</p></div><button className="btn ghost" onClick={() => setConfirmReset(false)}>Keep current run</button><button className="btn primary" onClick={reset} disabled={busy || refreshing}>Start new run</button></div>}
         {view === "command" && <main className="command-view">
           <div className="command-intro"><div><h1>Recover failed subscriptions safely.</h1><p>Prioritize the right intervention, approve money actions, and trace every decision.</p></div><div className="batch-badge"><span>Current portfolio</span><b>{metrics?.total_cases ?? 0} cases processed</b><small><Check size={13} /> All policy gates active</small></div></div>
           <div className="kpi-grid">
@@ -378,10 +456,15 @@ export default function App() {
             <KpiCard label="Awaiting approval" value={String(metrics?.pending_approvals ?? 0)} note={`${metrics?.blocked_actions ?? 0} risky actions contained`} icon={ShieldCheck} />
           </div>
           <div className="command-grid">
-            <section className="case-queue"><div className="queue-head"><div><h2>Recovery queue</h2><span>{metrics ? `${cases.length} ${metrics.demo_mode ? "synthetic" : "Razorpay test"} cases` : "Loading cases"}</span></div><div className="queue-count">{metrics?.pending_approvals ?? 0} gated</div></div><div className="case-list">{cases.map((item) => <CaseCard key={item.id} item={item} selected={selectedId === item.id} proposal={latestProposalByCase.get(item.id)} onClick={() => selectCase(item.id)} />)}{metrics && cases.length === 0 && <div className="queue-empty"><Clock3 /><b>Waiting for a failed subscription</b><span>Signed Razorpay test webhooks will appear here after verification.</span></div>}</div></section>
-            <Inspector detail={detail} busy={busy} displayName={metrics?.display_name ?? displayName} onDecision={decide} onCopyLink={copyLink} />
+            <section className="case-queue" aria-label="Recovery queue"><div className="queue-head"><div><h2>Recovery queue</h2><span aria-live="polite">{metrics ? `${visibleCases.length} of ${cases.length} cases` : "Loading cases"}</span></div><div className="queue-count">{metrics?.pending_approvals ?? 0} gated</div></div>
+              <div className="queue-controls">
+                <label className="queue-search"><Search size={16} /><input aria-label="Search recovery cases" type="search" placeholder="Name, subscription or failure" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+                <div className="queue-selects"><label>Status<select aria-label="Status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{[...new Set(cases.map((item) => item.status))].sort().map((status) => <option key={status} value={status}>{cleanLabel(status)}</option>)}</select></label><label>Sort by<select aria-label="Sort by" value={sortBy} onChange={(event) => setSortBy(event.target.value)}><option value="recent">Recently updated</option><option value="amount">Highest amount</option><option value="overdue">Most overdue</option></select></label></div>
+              </div>
+              <div className="case-list">{visibleCases.map((item) => <CaseCard key={item.id} item={item} selected={selectedId === item.id} proposal={latestProposalByCase.get(item.id)} disabled={busy} onClick={() => void selectCase(item.id)} />)}{metrics && cases.length === 0 && <div className="queue-empty"><Clock3 /><b>Waiting for a failed subscription</b><span>Signed Razorpay test webhooks will appear here after verification.</span></div>}{cases.length > 0 && visibleCases.length === 0 && <div className="queue-empty"><Search /><b>No matching cases</b><span>Try another name, subscription or status.</span><button className="btn ghost" onClick={() => { setQuery(""); setStatusFilter("all"); }}>Clear filters</button></div>}</div></section>
+            <Inspector detail={detail} busy={busy || refreshing || !!loadError} loading={detailLoading} error={detailError} onRetry={() => { if (selectedId) void selectCase(selectedId); }} displayName={metrics?.display_name ?? displayName} onDecision={decide} onCopyLink={copyLink} />
           </div>
-          <section className="command-audit card-surface"><div className="section-title"><span>Run audit history</span><small>{audit.length} recent events · demo reset starts a new run</small></div><AuditTimeline audit={audit.slice(0, 8)} /></section>
+          <section className="command-audit card-surface"><div className="section-title"><span>Audit history</span><select aria-label="Audit scope" value={auditScope} onChange={(event) => setAuditScope(event.target.value)}><option value="run">Entire run</option><option value="case">Selected case</option></select></div><p className="audit-context">{auditScope === "case" ? detail?.subscription_id ?? "Select a case to inspect its history" : "Application-enforced append-only history"} · Showing {Math.min(scopedAudit.length, 8)} of {scopedAudit.length} loaded events (latest 80 in this run)</p>{scopedAudit.length ? <AuditTimeline audit={scopedAudit.slice(0, 8)} /> : <p className="audit-context">No events in this view yet.</p>}</section>
         </main>}
         {view === "evaluation" && <EvaluationView data={evaluation} displayName={metrics?.display_name ?? displayName} running={busy} onRun={runEval} />}
         {view === "failures" && metrics?.demo_mode && <FailureLab audit={audit} result={failureResult} running={busy} onInject={inject} />}

@@ -16,7 +16,7 @@ Set-Location ..
 .\scripts\Verify-PayMender.ps1
 ```
 
-The verification gate covers backend behavior, dependency consistency and advisories, tracked secrets, frontend types/build, four Chrome reviewer flows, and the contained Reliability Lab. The committed backend lock is generated with:
+The verification gate covers backend behavior, dependency consistency and advisories, tracked secrets, frontend types/build, Chrome reviewer flows, and the contained Reliability Lab. Browser coverage includes queue search, slow case responses, refresh failures, reset confirmation and mobile layout. The committed backend lock is generated with:
 
 ```powershell
 $env:UV_CACHE_DIR = Join-Path $PWD ".runtime\uv-cache"
@@ -32,6 +32,14 @@ Keep `DEMO_MODE=true`, start with `.\scripts\Start-PayMender.ps1`, and open `htt
 3. Run the held-out evaluation and point to mean plus standard deviation for every metric.
 4. Run each Reliability Lab check. Confirm every assertion says `Passed` and copy the displayed evidence IDs into review notes.
 5. Describe the audit as application-enforced append-only history within an evidence run. The explicit demo reset clears that synthetic run; the SQLite file is not immutable storage.
+
+### Command-center controls
+
+- Search by customer, subscription, case ID or failure reason; filter by subscription status and sort by amount, overdue days or last update. Filtering the queue keeps your currently reviewed case open.
+- Use **Refresh portfolio** to fetch current cases and evidence without resetting the run. A failed refresh visibly marks the data as stale and disables approval until a successful refresh. While switching cases, decisions stay unavailable until the selected case loads.
+- Switch **Audit scope** to **Selected case** and expand **Evidence references** to correlate event and case IDs. This view filters the latest 80 loaded run events; it is not a complete historical export.
+- Use **Export evaluation** for a JSON copy of the displayed synthetic evaluation, including its disclaimer, run ID and every metric's mean and standard deviation. This download is synthetic evidence, not Razorpay provider proof.
+- **Reset demo data** asks before removing the current synthetic run. **Keep current run** cancels; **Start new run** resets the cases and clears earlier Reliability Lab results.
 
 ## 3. Razorpay Test Mode evidence
 

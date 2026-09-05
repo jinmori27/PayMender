@@ -105,7 +105,7 @@ No outbound SMS, email or WhatsApp integration exists. Generated messages are pr
 .\scripts\Verify-PayMender.ps1
 ```
 
-Verification runs the full backend suite, frontend checks/build, dependency audits, tracked-secret scanning and four Playwright reviewer flows. The real sandbox demo should create at most five Payment Links even though the Razorpay test account permits more. The remaining evaluation is entirely synthetic and makes no production uplift claim.
+Verification runs the full backend suite, frontend checks/build, dependency audits, tracked-secret scanning and Playwright reviewer flows, including queue filtering, delayed case loading, refresh recovery and mobile layout. The real sandbox demo should create at most five Payment Links even though the Razorpay test account permits more. The remaining evaluation is entirely synthetic and makes no production uplift claim.
 
 ## Scope and limitations
 
