@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { api } from "./api";
 import { CaseProgress, RecoveryGuide } from "./RecoveryWorkflow";
+import { PortfolioSnapshot } from "./PortfolioSnapshot";
 import type {
   AuditEvent,
   CaseDetail,
@@ -475,6 +476,7 @@ export default function App() {
             <KpiCard label="Confirmed recovered" value={money(metrics?.recovered_paise ?? 0)} note={metrics?.demo_mode ? "synthetic recovery evidence" : "webhook-confirmed test revenue"} icon={CircleDollarSign} />
             <KpiCard label="Awaiting approval" value={String(metrics?.pending_approvals ?? 0)} note={`${metrics?.blocked_actions ?? 0} risky actions contained`} icon={ShieldCheck} />
           </div>
+          <PortfolioSnapshot cases={cases} loaded={metrics !== null} />
           <div className="command-grid">
             <section className="case-queue" aria-label="Recovery queue"><div className="queue-head"><div><h2>Recovery queue</h2><span aria-live="polite">{metrics ? `${visibleCases.length} of ${cases.length} cases` : "Loading cases"}</span></div><div className="queue-count">{metrics?.pending_approvals ?? 0} gated</div></div>
               <div className="queue-controls">

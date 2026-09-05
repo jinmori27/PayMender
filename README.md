@@ -44,6 +44,8 @@ Start with the [reviewer runbook](docs/REVIEWER_RUNBOOK.md). More detail: [ARCHI
 
 ## Quick start
 
+The reference-led dashboard refresh and its data boundaries are documented in [Frontend refresh](docs/frontend-reference-refresh.md).
+
 Prerequisites: Python 3.12+, Node.js 20+ and pnpm.
 
 ```powershell

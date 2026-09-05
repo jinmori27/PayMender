@@ -41,7 +41,7 @@ test("contact-capped case exposes no approval action", async ({ page }) => {
   await expect(page.getByText("English preview", { exact: true })).toHaveCount(0);
 });
 
-test("evaluation discloses mean and deviation for every metric", async ({ page }) => {
+test("evaluation discloses mean and deviation for every metric", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: "Evaluation" }).click();
   await page.getByRole("button", { name: "Run evaluation" }).click();
   const table = page.getByRole("table");
@@ -58,11 +58,20 @@ test("evaluation discloses mean and deviation for every metric", async ({ page }
   expect(exported.evidence_source).toBe("synthetic");
   expect(exported.evaluation.policies).toHaveLength(4);
   expect(exported.evaluation.policies[0]).toHaveProperty("recovery_rate_std");
+  await page.screenshot({ path: testInfo.outputPath("evaluation.png"), fullPage: true });
 });
 
 test("queue search, filters and sorting preserve the reviewed case", async ({ page, request }) => {
   const cases = await (await request.get("/api/cases", { headers: operatorHeaders })).json();
   const queue = page.getByRole("region", { name: "Recovery queue" });
+  const snapshot = page.getByRole("region", { name: "Portfolio snapshot" });
+  await expect(snapshot).toContainText(`${cases.length} cases in this run`);
+  await expect(snapshot).toContainText("Current case statuses, not a recovery-rate forecast.");
+  const statuses = [...new Set(cases.map((item: { status: string }) => item.status))];
+  for (const status of statuses) {
+    const count = cases.filter((item: { status: string }) => item.status === status).length;
+    await expect(snapshot.locator(`[data-status="${status}"]`)).toContainText(`${count}`);
+  }
   await page.getByLabel("Search recovery cases").fill("  aarav  ");
   await expect(queue.locator(".case-card")).toHaveCount(1);
   await queue.getByRole("button", { name: /Aarav Mehta/ }).click();
@@ -79,6 +88,11 @@ test("queue search, filters and sorting preserve the reviewed case", async ({ pa
   await expect(queue.locator(".case-card").first()).toContainText(highest.customer_name);
   await page.getByLabel("Audit scope").selectOption("case");
   await expect(page.locator(".audit-context").first()).toContainText(cases.find((item: { customer_name: string }) => item.customer_name === "Aarav Mehta").subscription_id);
+  await page.route("**/api/cases", (route) => route.fulfill({ json: [] }));
+  await page.getByRole("button", { name: "Refresh portfolio" }).click();
+  await expect(snapshot).toContainText("0 cases in this run");
+  await expect(snapshot).toContainText("No cases yet.");
+  await expect(snapshot.locator(".snapshot-track")).toHaveCount(0);
 });
 
 test("slow case responses cannot restore stale approval controls", async ({ page, request }) => {
@@ -130,12 +144,20 @@ test("reset requires confirmation before clearing current approvals", async ({ p
 
 test("reviewer interface fits desktop and mobile", async ({ page }, testInfo) => {
   await expect(page.getByRole("button", { name: "Refresh portfolio" })).toBeEnabled();
-  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 1280, height: 720 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
     await expect(page.getByLabel("Search recovery cases")).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
     await page.screenshot({ path: testInfo.outputPath(`command-${viewport.width}.png`), fullPage: true });
   }
+  await page.getByRole("button", { name: "Lock command center" }).click();
+  await expect(page.getByLabel("Operator token")).toHaveValue("");
+  const placeholder = await page.getByLabel("Operator token").evaluate((input) => {
+    const style = getComputedStyle(input, "::placeholder");
+    return { color: style.color, opacity: style.opacity };
+  });
+  expect(placeholder).toEqual({ color: "rgb(98, 107, 126)", opacity: "1" });
+  await page.screenshot({ path: testInfo.outputPath("unlock-390.png"), fullPage: true });
 });
 
 test("workflow guide and case views explain the recovery boundaries", async ({ page }, testInfo) => {
@@ -164,7 +186,7 @@ test("workflow guide and case views explain the recovery boundaries", async ({ p
   await expect(page.getByRole("heading", { name: "Neil Verma" })).toBeVisible();
 });
 
-test("all Reliability Lab controls return traceable contained evidence", async ({ page }) => {
+test("all Reliability Lab controls return traceable contained evidence", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: "Reliability lab" }).click();
   const scenarios = [
     ["Concurrent duplicate", /duplicate contained/i],
@@ -177,4 +199,5 @@ test("all Reliability Lab controls return traceable contained evidence", async (
     await expect(page.getByText(resultName)).toBeVisible();
     await expect(page.getByText("Evidence:", { exact: false })).toBeVisible();
   }
+  await page.screenshot({ path: testInfo.outputPath("reliability.png"), fullPage: true });
 });

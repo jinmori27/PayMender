@@ -20,5 +20,6 @@ frontend/dist/
 frontend/.vite/
 frontend/test-results/
 frontend/playwright-report/
+.impeccable/review/
 *.log
 .DS_Store
