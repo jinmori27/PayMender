@@ -13,6 +13,7 @@ import {
   ExternalLink,
   FlaskConical,
   History,
+  HelpCircle,
   KeyRound,
   LogOut,
   RefreshCw,
@@ -24,6 +25,7 @@ import {
   Zap,
 } from "lucide-react";
 import { api } from "./api";
+import { CaseProgress, RecoveryGuide } from "./RecoveryWorkflow";
 import type {
   AuditEvent,
   CaseDetail,
@@ -35,7 +37,7 @@ import type {
   RecoveryAction,
 } from "./types";
 
-type View = "command" | "evaluation" | "failures";
+type View = "command" | "evaluation" | "failures" | "guide";
 
 const actionLabels: Record<RecoveryAction, string> = {
   WAIT_FOR_RETRY: "Wait for Razorpay retry",
@@ -122,6 +124,7 @@ function Inspector({ detail, busy, loading, error, onRetry, displayName, onDecis
   onDecision: (decision: "approve" | "reject") => void;
   onCopyLink: (url: string) => void;
 }) {
+  const [inspectorView, setInspectorView] = useState<"decision" | "model" | "messages">("decision");
   if (loading) return <section className="inspector empty-state" role="status"><RefreshCw className="spin" /><h2>Loading case details</h2><p>Checking the latest proposal before enabling decisions.</p></section>;
   if (error) return <section className="inspector empty-state" role="alert"><AlertTriangle /><h2>Case could not be loaded</h2><p>{error}</p><button className="btn ghost" onClick={onRetry}>Retry case</button></section>;
   if (!detail) return <section className="inspector empty-state"><Sparkles /><h2>Select a recovery case</h2><p>Inspect the evidence, model scores, policy override and complete audit context.</p></section>;
@@ -130,7 +133,7 @@ function Inspector({ detail, busy, loading, error, onRetry, displayName, onDecis
     <section className="inspector">
       <div className="inspector-head">
         <div><h2>{detail.customer_name}</h2><p>{detail.subscription_id}</p></div>
-        <div className="amount-block"><small>Outstanding</small><strong>{detail.enrichment_state === "pending" ? "Verifying" : detail.enrichment_state === "failed" ? "Unavailable" : money(detail.amount_paise)}</strong></div>
+        <div className="amount-block"><small>Case amount</small><strong>{detail.enrichment_state === "pending" ? "Verifying" : detail.enrichment_state === "failed" ? "Unavailable" : money(detail.amount_paise)}</strong></div>
       </div>
       <div className="case-facts">
         <div><span>Status</span><StatusPill value={detail.status} /></div>
@@ -138,6 +141,7 @@ function Inspector({ detail, busy, loading, error, onRetry, displayName, onDecis
         <div><span>Attempts</span><b>{detail.retry_count}</b></div>
         <div><span>Case source</span><b>{detail.source === "synthetic" ? "Synthetic demo" : "Razorpay test"}</b></div>
       </div>
+      <CaseProgress detail={detail} />
       {detail.enrichment_state === "pending" && (
         <div className="provider-state"><RefreshCw className="spin" /><div><b>Verifying invoice context</b><span>{displayName} is fetching the authoritative amount and latest failed payment from Razorpay.</span></div></div>
       )}
@@ -148,27 +152,41 @@ function Inspector({ detail, busy, loading, error, onRetry, displayName, onDecis
         <>
           <div className="proposal-banner">
             <div className="proposal-icon"><Sparkles size={18} /></div>
-            <div><span>Policy-approved recommendation</span><h3>{actionLabels[proposal.recommended_action]}</h3><p>{proposal.policy_reason}</p></div>
-            <div className="expected-value"><span>Expected value</span><b>{moneyRupees(proposal.expected_value_rupees)}</b></div>
+            <div><span>Policy decision</span><h3>{actionLabels[proposal.recommended_action]}</h3><p>{["proposed", "retryable_failure"].includes(proposal.state) ? "Review the evidence before approving this action." : `Recorded decision · ${cleanLabel(proposal.state)}`}</p></div>
+            <div className="expected-value"><span>Estimated net value</span><b>{moneyRupees(proposal.expected_value_rupees)}</b></div>
           </div>
           {proposal.model_recommended_action !== proposal.recommended_action && (
             <div className="override-note"><ShieldCheck size={17} /><span>Safety gate changed the AI proposal from <b>{actionLabels[proposal.model_recommended_action]}</b>.</span></div>
           )}
-          <div className="inspector-grid">
-            <div className="panel-section">
-              <div className="section-title"><span>Agent reasoning</span><small>{proposal.provider}</small></div>
-              <p className="reasoning">{proposal.explanation}</p>
-              <div className="evidence-row">{proposal.evidence.map((item) => <code key={item}>{item}</code>)}</div>
+          <div className="inspector-switcher" role="group" aria-label="Case information">
+            <button aria-pressed={inspectorView === "decision"} onClick={() => setInspectorView("decision")}>Decision</button>
+            <button aria-pressed={inspectorView === "model"} onClick={() => setInspectorView("model")}>Model evidence</button>
+            <button aria-pressed={inspectorView === "messages"} onClick={() => setInspectorView("messages")}>Message previews</button>
+          </div>
+          <div className="inspector-content">
+            {inspectorView === "decision" && <section className="panel-section" aria-label="Decision explanation">
+              <div className="section-title"><span>Why this action?</span><small>Deterministic safety policy</small></div>
+              <p className="reasoning">{proposal.policy_reason}</p>
+              <dl className="decision-context"><div><dt>Days overdue</dt><dd>{detail.days_overdue}</dd></div><div><dt>Contacts in 7 days</dt><dd>{detail.contacts_7d}</dd></div><div><dt>Previous interventions</dt><dd>{detail.previous_interventions}</dd></div></dl>
+              <p className="inspector-note">{proposal.recommended_action === "STOP_CONTACT" ? "Contact is stopped by policy. There is no customer action to approve." : proposal.recommended_action === "WAIT_FOR_RETRY" ? "PayMender records the decision to wait. Razorpay manages its own scheduled retry." : proposal.recommended_action === "ESCALATE_HUMAN" ? "This case needs a person to review it. No payment link or message is sent automatically." : "Review the policy reason and amount before deciding. Message previews never send a notification."}</p>
+            </section>}
+            {inspectorView === "messages" && <section className="panel-section" aria-label="Customer message previews">
+              <div className="section-title"><span>Drafts only</span><small>Nothing is sent</small></div>
+              {proposal.recommended_action === "STOP_CONTACT" ? <p className="inspector-note">Contact is stopped for this case. No outreach preview is actionable.</p> : <>
               <div className="message-preview">
                 <div><span>English preview</span><p>{proposal.message_english}</p></div>
                 <div><span>Hinglish preview</span><p>{proposal.message_hinglish}</p></div>
-                <small>No message is sent by this MVP.</small>
+                <small>No message is sent by this app. Approval does not send these drafts.</small>
               </div>
-            </div>
-            <div className="panel-section score-section">
-              <div className="section-title"><span>Next-best-action model</span><small>{Math.round(proposal.confidence * 100)}% confidence</small></div>
+              </>}
+            </section>}
+            {inspectorView === "model" && <section className="panel-section score-section" aria-label="Model evidence">
+              <div className="section-title"><span>Compare the possible actions</span><small>{Math.round(proposal.confidence * 100)}% proposal confidence</small></div>
+              <p className="inspector-note">Simulator-trained estimates, not guaranteed recovery. Bars compare net expected value; percentages show estimated recovery probability. The safety policy determines which action is allowed.</p>
+              <p className="reasoning">{proposal.explanation}</p>
               <ScoreBars proposal={proposal} />
-            </div>
+              <div className="model-evidence"><h4>Inputs cited by the proposal</h4><div className="evidence-row">{proposal.evidence.map((item) => <code key={item}>{item}</code>)}</div><small>Explanation source: {proposal.provider}</small></div>
+            </section>}
           </div>
           {(proposal.state === "proposed" || proposal.state === "retryable_failure") && (
             <>
@@ -177,7 +195,7 @@ function Inspector({ detail, busy, loading, error, onRetry, displayName, onDecis
                   <div><span>Exact amount</span><b>{money(detail.amount_paise)}</b></div>
                   <div><span>Link expiry</span><b>48 hours</b></div>
                   <div><span>Notifications</span><b>Disabled</b></div>
-                  <small>Test-mode only. Approval creates one Razorpay link and does not send it to the customer.</small>
+                  <small>{detail.source === "synthetic" ? "Demo only. Approval creates a simulated link without contacting Razorpay." : "Test-mode only. Approval creates one Razorpay link and does not send it to the customer."}</small>
                 </div>
               )}
               <div className="approval-bar">
@@ -191,7 +209,7 @@ function Inspector({ detail, busy, loading, error, onRetry, displayName, onDecis
               </div>
             </>
           )}
-          {detail.active_recovery_link_id && detail.active_recovery_link_url && (
+          {detail.active_recovery_link_id && detail.active_recovery_link_url && detail.recovered_amount_paise === 0 && detail.status !== "charged" && (
             <div className="link-success">
               <Check />
               <div><b>Recovery link ready</b><span>{detail.active_recovery_link_id}. No notification sent.</span></div>
@@ -436,10 +454,11 @@ export default function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-mark"><div className="logo-glyph"><Zap fill="currentColor" /></div><div><b>{metrics?.display_name ?? displayName}</b><span>Revenue Recovery</span></div></div>
-        <nav>
-          <button className={view === "command" ? "active" : ""} onClick={() => setView("command")}><Activity />Command center</button>
-          <button className={view === "evaluation" ? "active" : ""} onClick={() => setView("evaluation")}><BarChart3 />Evaluation</button>
-          {metrics?.demo_mode && <button className={view === "failures" ? "active" : ""} onClick={() => setView("failures")}><FlaskConical />Reliability lab</button>}
+        <nav aria-label="Main navigation">
+          <button className={view === "command" ? "active" : ""} aria-current={view === "command" ? "page" : undefined} onClick={() => setView("command")}><Activity /><span>Command center</span></button>
+          <button className={view === "evaluation" ? "active" : ""} aria-current={view === "evaluation" ? "page" : undefined} onClick={() => setView("evaluation")}><BarChart3 /><span>Evaluation</span></button>
+          {metrics?.demo_mode && <button className={view === "failures" ? "active" : ""} aria-current={view === "failures" ? "page" : undefined} onClick={() => setView("failures")}><FlaskConical /><span>Reliability lab</span></button>}
+          <button className={view === "guide" ? "active" : ""} aria-current={view === "guide" ? "page" : undefined} onClick={() => setView("guide")}><HelpCircle /><span>How it works</span></button>
         </nav>
         <div className="trust-card"><ShieldCheck /><b>Bounded by design</b><p>AI recommends. Policy constrains. You approve every external action.</p><span><i /> TEST ENVIRONMENT</span></div>
       </aside>
@@ -449,10 +468,11 @@ export default function App() {
         {confirmReset && <div className="portfolio-alert" role="alert"><History size={18} /><div><b>Start a new demo run?</b><p>This removes the current synthetic cases, approvals and audit history.</p></div><button className="btn ghost" onClick={() => setConfirmReset(false)}>Keep current run</button><button className="btn primary" onClick={reset} disabled={busy || refreshing}>Start new run</button></div>}
         {view === "command" && <main className="command-view">
           <div className="command-intro"><div><h1>Recover failed subscriptions safely.</h1><p>Prioritize the right intervention, approve money actions, and trace every decision.</p></div><div className="batch-badge"><span>Current portfolio</span><b>{metrics?.total_cases ?? 0} cases processed</b><small><Check size={13} /> All policy gates active</small></div></div>
+          <div className="workspace-guide"><div><ShieldCheck size={20} /><p><b>You control the next action.</b> Review a case, check the safety decision, then approve if required.</p></div><button className="text-btn" onClick={() => setView("guide")}>Explore the workflow <ArrowRight size={16} /></button></div>
           <div className="kpi-grid">
             <KpiCard label="Revenue at risk" value={money(metrics?.at_risk_paise ?? 0)} note="active failed subscriptions" icon={AlertTriangle} />
             <KpiCard label="Predicted recoverable" value={money(metrics?.predicted_recoverable_paise ?? 0)} note="policy-adjusted expected value" icon={Sparkles} accent />
-            <KpiCard label="Confirmed recovered" value={money(metrics?.recovered_paise ?? 0)} note="webhook-confirmed test revenue" icon={CircleDollarSign} />
+            <KpiCard label="Confirmed recovered" value={money(metrics?.recovered_paise ?? 0)} note={metrics?.demo_mode ? "synthetic recovery evidence" : "webhook-confirmed test revenue"} icon={CircleDollarSign} />
             <KpiCard label="Awaiting approval" value={String(metrics?.pending_approvals ?? 0)} note={`${metrics?.blocked_actions ?? 0} risky actions contained`} icon={ShieldCheck} />
           </div>
           <div className="command-grid">
@@ -462,12 +482,13 @@ export default function App() {
                 <div className="queue-selects"><label>Status<select aria-label="Status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{[...new Set(cases.map((item) => item.status))].sort().map((status) => <option key={status} value={status}>{cleanLabel(status)}</option>)}</select></label><label>Sort by<select aria-label="Sort by" value={sortBy} onChange={(event) => setSortBy(event.target.value)}><option value="recent">Recently updated</option><option value="amount">Highest amount</option><option value="overdue">Most overdue</option></select></label></div>
               </div>
               <div className="case-list">{visibleCases.map((item) => <CaseCard key={item.id} item={item} selected={selectedId === item.id} proposal={latestProposalByCase.get(item.id)} disabled={busy} onClick={() => void selectCase(item.id)} />)}{metrics && cases.length === 0 && <div className="queue-empty"><Clock3 /><b>Waiting for a failed subscription</b><span>Signed Razorpay test webhooks will appear here after verification.</span></div>}{cases.length > 0 && visibleCases.length === 0 && <div className="queue-empty"><Search /><b>No matching cases</b><span>Try another name, subscription or status.</span><button className="btn ghost" onClick={() => { setQuery(""); setStatusFilter("all"); }}>Clear filters</button></div>}</div></section>
-            <Inspector detail={detail} busy={busy || refreshing || !!loadError} loading={detailLoading} error={detailError} onRetry={() => { if (selectedId) void selectCase(selectedId); }} displayName={metrics?.display_name ?? displayName} onDecision={decide} onCopyLink={copyLink} />
+            <Inspector key={selectedId} detail={detail} busy={busy || refreshing || !!loadError} loading={detailLoading} error={detailError} onRetry={() => { if (selectedId) void selectCase(selectedId); }} displayName={metrics?.display_name ?? displayName} onDecision={decide} onCopyLink={copyLink} />
           </div>
           <section className="command-audit card-surface"><div className="section-title"><span>Audit history</span><select aria-label="Audit scope" value={auditScope} onChange={(event) => setAuditScope(event.target.value)}><option value="run">Entire run</option><option value="case">Selected case</option></select></div><p className="audit-context">{auditScope === "case" ? detail?.subscription_id ?? "Select a case to inspect its history" : "Application-enforced append-only history"} · Showing {Math.min(scopedAudit.length, 8)} of {scopedAudit.length} loaded events (latest 80 in this run)</p>{scopedAudit.length ? <AuditTimeline audit={scopedAudit.slice(0, 8)} /> : <p className="audit-context">No events in this view yet.</p>}</section>
         </main>}
         {view === "evaluation" && <EvaluationView data={evaluation} displayName={metrics?.display_name ?? displayName} running={busy} onRun={runEval} />}
         {view === "failures" && metrics?.demo_mode && <FailureLab audit={audit} result={failureResult} running={busy} onInject={inject} />}
+        {view === "guide" && <RecoveryGuide demoMode={metrics?.demo_mode ?? true} onReview={() => setView("command")} />}
       </div>
       {notice && <button className="toast" onClick={() => setNotice(null)} aria-live="polite"><Check size={17} /><span>{notice}</span><X size={15} /></button>}
     </div>

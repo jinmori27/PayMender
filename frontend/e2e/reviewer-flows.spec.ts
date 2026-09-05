@@ -19,12 +19,26 @@ test("operator can approve one gated recovery link", async ({ page }) => {
   await page.getByRole("button", { name: "Approve action" }).click();
   await expect(page.getByText("Recovery link ready")).toBeVisible();
   await expect(page.getByText("No notification sent.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Link ready · payment unconfirmed", { exact: true })).toBeVisible();
+  await expect(page.getByText("Payment confirmed", { exact: true })).toHaveCount(0);
+  await page.route("**/api/cases/*", async (route) => {
+    const response = await route.fetch();
+    const detail = await response.json();
+    await route.fulfill({ json: { ...detail, recovered_amount_paise: detail.amount_paise, status: "charged" } });
+  });
+  await page.getByRole("button", { name: "Refresh portfolio" }).click();
+  await expect(page.getByText("Payment confirmed", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open test link" })).toHaveCount(0);
 });
 
 test("contact-capped case exposes no approval action", async ({ page }) => {
   await page.getByRole("button", { name: /Neil Verma/ }).click();
   await expect(page.getByRole("heading", { name: "Stop contact" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Approve action" })).toHaveCount(0);
+  await expect(page.getByText("Contact stopped", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Message previews", exact: true }).click();
+  await expect(page.getByText("Contact is stopped for this case. No outreach preview is actionable.")).toBeVisible();
+  await expect(page.getByText("English preview", { exact: true })).toHaveCount(0);
 });
 
 test("evaluation discloses mean and deviation for every metric", async ({ page }) => {
@@ -122,6 +136,32 @@ test("reviewer interface fits desktop and mobile", async ({ page }, testInfo) =>
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
     await page.screenshot({ path: testInfo.outputPath(`command-${viewport.width}.png`), fullPage: true });
   }
+});
+
+test("workflow guide and case views explain the recovery boundaries", async ({ page }, testInfo) => {
+  await page.getByRole("button", { name: /Aarav Mehta/ }).click();
+  await page.getByRole("button", { name: "Model evidence", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Model evidence" })).toContainText("Simulator-trained estimates, not guaranteed recovery.");
+  await page.getByRole("button", { name: "Message previews", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Customer message previews" })).toContainText("Approval does not send these drafts.");
+  await page.getByRole("button", { name: /Neil Verma/ }).click();
+  await expect(page.getByRole("button", { name: "Decision", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "How it works", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "How recovery works" })).toBeVisible();
+  const stages = page.getByRole("navigation", { name: "Recovery workflow stages" });
+  for (const stage of ["Detect the failed payment", "Compare recovery options", "Apply the safety rules", "Review and approve", "Confirm what recovered"]) {
+    await stages.getByRole("button", { name: stage }).click();
+    await expect(page.getByRole("heading", { name: stage, exact: true })).toBeVisible();
+  }
+  await expect(page.getByText("Creating a link does not mean the customer paid.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "You’re in synthetic demo mode" })).toBeVisible();
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+    await page.screenshot({ path: testInfo.outputPath(`workflow-${viewport.width}.png`), fullPage: true });
+  }
+  await page.getByRole("button", { name: "Review a case", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Neil Verma" })).toBeVisible();
 });
 
 test("all Reliability Lab controls return traceable contained evidence", async ({ page }) => {

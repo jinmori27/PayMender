@@ -35,6 +35,8 @@ Keep `DEMO_MODE=true`, start with `.\scripts\Start-PayMender.ps1`, and open `htt
 
 ### Command-center controls
 
+- Open **How it works** for the five-stage walkthrough, including what to verify and when an operator decision is required. The guide identifies the current operating mode and explains why a created link is not a recovered payment.
+- Each case shows its context, safety review, decision and outcome. Use **Decision**, **Model evidence** and **Message previews** to inspect the case without losing the approval controls. Stopped cases do not expose actionable outreach previews.
 - Search by customer, subscription, case ID or failure reason; filter by subscription status and sort by amount, overdue days or last update. Filtering the queue keeps your currently reviewed case open.
 - Use **Refresh portfolio** to fetch current cases and evidence without resetting the run. A failed refresh visibly marks the data as stale and disables approval until a successful refresh. While switching cases, decisions stay unavailable until the selected case loads.
 - Switch **Audit scope** to **Selected case** and expand **Evidence references** to correlate event and case IDs. This view filters the latest 80 loaded run events; it is not a complete historical export.
